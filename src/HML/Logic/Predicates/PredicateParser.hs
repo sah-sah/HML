@@ -1,0 +1,286 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+{--
+ -- Predicates.hs
+ -- :l ./HML/Logic/PredicateLogic/Predicates.hs from devel directory
+ -- A module for predicate logic
+ --
+ -- Gives basic data types for predicate logic, show instances, construction functions
+ -- and some examples.
+ --}
+module HML.Logic.Predicates.PredicateParser where
+
+import HML.Logic.Predicates.Predicates
+
+import Data.Char(isLetter, isDigit, isLower, isUpper)
+import Data.List
+import Control.Applicative((<$>), (<*>), (<*), (*>), (<|>), (<$))
+import Control.Monad
+
+--import Text.LaTeX.Base.Parser hiding (Parser)
+
+import Text.Parsec hiding ((<|>))
+import Text.Parsec.Expr
+import Text.Parsec.String(Parser)
+
+{-
+ - Need to define what input we want
+ -
+ - Can have built in infix operators & | x| ~ => <-> etc
+ - Can have user defined functions f(..) etc
+ - How can we make it extensible?
+ -   We want to be able to add operators later
+ -   bind certain function names to more convenient names
+ - Need to be able to define functions (maybe separately from Predicates, but using
+ - the predicate parser)
+ -
+ - We should have a parser for latex expressions
+ -
+ - TODO: (1) a parser for latex expressions (maybe it already exists, it is in HaTeX)
+ -       (2) add infix operators for expressions DONE
+ -       (3) typed expressions (or maybe type is an infix operator?)
+ -           Just use brackets <exp> :: {type} ??
+ -       (4) Need a strategy deal with reserved words (i.e. force the parser to fail and use try)
+ -       (5) We will need if expressions, case expressions e.g. gcd(m,n) = m if m==n, m-n if m > n, n-m if n > m
+ -           These could be done at a level higher than predicates, rather than within predicates
+ -       (6) We need more sophisticated ways to deal with operators so we can add a greater variety
+ -           Currently adding more is likely to break the parser e.g. we need to prevent -> parsing as -, then >
+ -           (c.f. Left factoring of grammar - maybe use a Patricia Trie)
+ -}
+
+
+
+testP :: Parser a -> String -> Either ParseError a
+testP p str = parse (whitespace >> p) "(fail)" str
+
+{- ----- parsing predicates ----- -}
+
+predexp :: Parser Predicate
+predexp = PExp <$> expression
+
+ppatvar :: Parser Predicate
+ppatvar = PPatVar <$> patvarStr 'P'
+
+pterm :: Parser Predicate
+pterm = boundpred <|> predexp <|> ppatvar <|> parens predicate
+-- NOTE: we need to try boundpred first so forall and exists aren't read as variable names
+
+predicate :: Parser Predicate
+predicate = buildExpressionParser optable pterm <?> "predicate expression"
+
+-- constructing the operator table
+binary op assoc = Infix (PBinary <$> bop op) assoc
+unary op = Prefix (PUnary <$> uop op)
+
+optable = [ [unary PNot]
+          , [binary PAnd AssocLeft, binary POr AssocLeft, binary PXOr AssocNone]
+          , [binary PImp AssocNone, binary PIff AssocLeft]]
+
+bop :: PBOp -> Parser PBOp
+bop PAnd = lexeme (char '&') *> pure PAnd
+bop POr  = lexeme (char '|') *> pure POr
+bop PXOr = lexeme (string "x|") *> pure PXOr
+bop PImp = lexeme (string "->") *> pure PImp
+bop PIff = lexeme (string "<->") *> pure PIff
+
+uop :: PUOp -> Parser PUOp
+uop PNot = lexeme (char '~') *> pure PNot
+
+boundpred :: Parser Predicate
+boundpred = PBinding <$> lexeme (forallPB <|> existsPB) <*> predicate
+
+-- | parser forall <pname>. or forall <pname> s.t. <predicate>.
+forallPB, existsPB :: Parser PredicateBinding
+forallPB = do void $ lexeme $ string "forall"
+              pn <- lexeme pname
+              p <- justDot <|> suchThat
+              return $ Forall pn p
+    where justDot = char '.' *> pure PEmpty
+          suchThat = lexeme (string "s.t.") *> predicate <* char '.'
+
+existsPB = do void $ lexeme $ string "exists"
+              pn <- lexeme pname
+              p <- justDot <|> suchThat
+              return $ Exists pn p
+    where justDot = char '.' *> pure PEmpty
+          suchThat = lexeme (string "s.t.") *> predicate <* char '.'
+
+{- ----- parsing expressions ----- -}
+
+-- | parses an expression pattern variable
+epatvar :: Parser Expression
+epatvar = ExpPatVar <$> patvarStr 'E'
+
+-- | parses a PName into an expression
+ename :: Parser Expression
+ename = ExpN <$> pname
+
+-- | parses a function expression - <name>(<exp1>,<exp2>,..)
+-- NOTE: we need to expand this to allow operators etc
+-- use a similar strategy to Haskell in requiring operators
+-- to be written in a different form/using different characters
+fnexp :: Parser Expression
+fnexp = ExpF <$> varname <*> lexeme args
+    where args = between (char '(') (char ')') $ sepBy1 expression (char ',')
+
+-- | parses a function written in infix style
+infixfn :: Parser String
+infixfn = char '\\' *> lexeme varname
+
+-- | parses an expression
+eterm :: Parser Expression
+eterm = try fnexp <|> ename <|> epatvar <|> parens expression
+-- need a try on fnexp as a function name is the same as a variable name
+-- functions are differentiated from variables by args
+
+expression :: Parser Expression
+expression = buildExpressionParser optableE eterm <?> "expression"
+
+-- constructing the operator table for expressions
+binaryE op assoc = Infix ((mkBinaryFn . ExpF) <$> expBOp op) assoc
+unaryE op = Prefix ((mkUnaryFn . ExpF) <$> expUOp op)
+
+mkBinaryFn :: ([Expression] -> Expression) -> Expression -> Expression -> Expression
+mkBinaryFn expCon e f = expCon [e,f]
+
+mkUnaryFn :: ([Expression] -> Expression) -> Expression -> Expression
+mkUnaryFn expCon e = expCon [e]
+
+optableE = [ [Infix ((mkBinaryFn . ExpF) <$> infixfn) AssocNone]
+           , [unaryE "-"]
+           , [binaryE "*" AssocLeft, binaryE "/" AssocLeft]
+           , [binaryE "+" AssocLeft, binaryE "-" AssocLeft]
+           ]
+
+expBOp, expUOp :: String -> Parser String
+expBOp "+" = lexeme (char '+') *> pure "addNum"
+expBOp "-" = lexeme minus *> pure "subtractNum"
+expBOp "/" = lexeme (char '/') *> pure "divideNum"
+expBOp "*" = lexeme (char '*') *> pure "multipleNum"
+
+expUOp "-" = (char '-') *> pure "negateNum"
+
+minus :: Parser ()
+minus = try (do { void $ char '-'; notFollowedBy (char '>') })
+
+{- ----- parsing PNames ----- -}
+
+-- | parses a PName
+pname :: Parser PName
+pname = npatvar <|> const' <|> var <|> int'
+
+-- | parses a PName integer
+int' :: Parser PName
+int' = (PInt . read) <$> lexeme (many1 digit)
+
+-- | parses a PName variable
+var :: Parser PName
+var = PVar <$> varname
+
+-- | parses a PName constant
+const' :: Parser PName
+const' = checkConsts <$> constname
+    where checkConsts c = case lookup c reservedConst of
+                            Just pn -> pn
+                            Nothing -> PConst c
+
+          reservedConst = [("T", PTrue), ("True", PTrue), ("False", PFalse), ("F", PFalse)]
+
+npatvar :: Parser PName
+npatvar = NPatVar <$> patvarStr 'N'
+
+-- | parses a pattern variable for names
+patvarStr :: Char -> Parser String
+patvarStr t = lexeme (string (t:"{") *> patname <* char '}')
+
+{- ----- general parsing functions ----- -}
+
+-- | parses a pattern variable name - a letter (upper- or lowercase) followed by one or more letters or digits
+patname :: Parser String
+patname = (:) <$> letter <*> many (letter <|> digit)
+
+-- | parses a variable name - a lowercase letter followed by zero or more letters or digits
+-- NOTE: x| is parsed as xor not as x followed by |
+-- NOTE: forall and exists may cause problems
+-- NOTE: how do we parse greek characters etc (could try parsing \alpha by parse \varname
+-- then check whether varname is in a list of special names
+varname :: Parser String
+varname = xvarname <|> lexeme ((:) <$> first <*> many rest)
+    where first = satisfy (\c -> isLetter c && isLower c && c /= 'x')
+          rest = letter <|> digit
+
+xvarname :: Parser String
+xvarname = try $ lexeme $ do void $ char 'x'
+                             notFollowedBy (char '|')
+                             str <- many (letter <|> digit)
+                             return ('x':str)
+
+
+
+
+-- | parses the name of a constant - an uppercase letter followed by zero or more letters or digits
+constname :: Parser String
+constname = lexeme ((:) <$> first <*> many rest)
+    where first = satisfy (\c -> isLetter c && isUpper c)
+          rest = letter <|> digit
+
+{- ----- helper functions ----- -}
+
+whitespace :: Parser ()
+whitespace = void $ spaces --many $ oneOf " \n\t"
+
+lexeme :: Parser a -> Parser a
+lexeme p = p <* whitespace
+
+parens :: Parser a -> Parser a
+parens p = lexeme (char '(') *> p <* lexeme (char ')')
+
+{- ---------- Data types ---------- -}
+{-
+-- variables, constants, and functions can have multiple types 
+data Type = AbstractSetT -- for abstract sets
+          | PredicateT   -- essentially a boolean
+          | EmptyT       -- no type information
+    deriving (Eq)
+
+-- the types of variables are given as predicates (i.e. A :: AbstractSetT is a predicate
+-- which we use for matching, e.g., from x :: Integer and y=x^2 we can derive y :: Integer)
+-- This datatype will need to be expanded, e.g. to (String,String) where the first
+-- string is a unique identifier, and the second is how to display it
+data PName = PVar String     -- variables x, A, etc
+           | PConst String   -- constants 1, Z, True etc
+           | PTrue
+           | PFalse
+           | NPatVar String  -- for matching
+    deriving (Eq)
+
+-- an expression is either a type expression (x :: Integer) or a function expression (x + y)
+data Expression = ExpN PName
+                | ExpF String [Expression]
+                | ExpPatVar String
+                | ExpCut
+    deriving (Eq)
+
+-- binding a variable in a predicate
+-- forall x s.t. P(x). Q(x) 
+-- note: name must be a PVar
+data PredicateBinding = Forall PName Predicate | Exists PName Predicate
+    deriving (Eq)
+
+data PBOp = PAnd | POr | PXOr | PImp | PIff
+    deriving (Eq)
+
+data PUOp = PNot
+    deriving (Eq)
+
+data Predicate = PEmpty
+               | PExp Expression
+               | PExpT Expression Type
+               | PBinary PBOp Predicate Predicate
+               | PUnary PUOp Predicate 
+               | PBinding PredicateBinding Predicate
+               | PPatVar String -- for forming logic laws
+               | PCut
+    deriving (Eq)
+
+-}

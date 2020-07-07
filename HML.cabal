@@ -1,0 +1,110 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.33.0.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 13d1571e340a1d25f6036ee20bd7db411140bcf3ebaefd08c1d9800a4d827d58
+
+name:           HML
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/githubuser/HML#readme>
+homepage:       https://github.com/githubuser/HML#readme
+bug-reports:    https://github.com/githubuser/HML/issues
+author:         Stephen Howe
+maintainer:     a.stephen.howe@gmail.com
+copyright:      2020 Stephen Howe
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/githubuser/HML
+
+library
+  exposed-modules:
+      HML.Logic.Predicates.Axioms.Base
+      HML.Logic.Predicates.Axioms.Set
+      HML.Logic.Predicates.Example
+      HML.Logic.Predicates.PredicateCursors
+      HML.Logic.Predicates.PredicateLogicLaws
+      HML.Logic.Predicates.PredicateMatching
+      HML.Logic.Predicates.PredicateParser
+      HML.Logic.Predicates.PredicateProofGraph
+      HML.Logic.Predicates.PredicateProofs
+      HML.Logic.Predicates.Predicates
+      HML.Logic.Predicates.PredicatesPrettyPrint
+      HML.Logic.Predicates.PredicatesServer
+      HML.Logic.Predicates.PrettyPrintLaTeX
+      HML.Logic.Propositions.Propositions
+      HML.Logic.Propositions.PropositionsCursor
+      HML.Logic.Propositions.PropositionsHtml
+      HML.Logic.Propositions.PropositionsLaTeX
+      HML.Logic.Propositions.PropositionsLogicLaws
+      HML.Logic.Propositions.PropositionsProof
+      HML.Misc.TakeAwayTriangles
+      HML.Utils.Utils
+      Lib
+  other-modules:
+      Paths_HML
+  hs-source-dirs:
+      src
+  build-depends:
+      HaTeX
+    , aeson
+    , base >=4.7 && <5
+    , blaze-html
+    , bytestring
+    , containers
+    , fgl
+    , mtl
+    , parsec
+    , text
+  default-language: Haskell2010
+
+executable HML-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_HML
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      HML
+    , HaTeX
+    , aeson
+    , base >=4.7 && <5
+    , blaze-html
+    , bytestring
+    , containers
+    , fgl
+    , mtl
+    , parsec
+    , text
+  default-language: Haskell2010
+
+test-suite HML-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_HML
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      HML
+    , HaTeX
+    , aeson
+    , base >=4.7 && <5
+    , blaze-html
+    , bytestring
+    , containers
+    , fgl
+    , mtl
+    , parsec
+    , text
+  default-language: Haskell2010
