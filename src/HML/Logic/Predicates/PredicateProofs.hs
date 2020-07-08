@@ -70,6 +70,14 @@ data Proof = Proof { proofGraph :: ProofGraph
                    -- add in printing information etc
                    } deriving (Show)
 
+-- a version of Result for sending as a JSON object
+data ResultStr = ResultStr { rsType :: String
+                           , rsName :: String
+                           , rsPredicate :: Predicate
+                           , rsDeductions :: [([String],String)]
+                           , rsAssumptions :: [String]
+                           }
+    deriving (Show)
 
 {- ---------- Show instances ---------- -}
 
@@ -151,10 +159,36 @@ getNamedPredicate :: String -> Proof -> Maybe Predicate
 getNamedPredicate n prf = do (nid,pn) <- getNodeN n (proofGraph prf)
                              return $ nodePredicate pn
 
+getResultString :: String -> Proof -> Maybe ResultStr
+getResultString n prf = do (nid,pn) <- getNodeN n (proofGraph prf)
+                           case pn of
+                             Axiom r     -> mkResultStr "axiom" r
+                             ProofStep r -> mkResultStr "proofstep" r
+    where pns = getProofNodes (proofGraph prf)
+
+          mkResultStr t r = do -- get deductions
+                               dsStr <- sequence $ map mkDStr (deductions r)
+                               -- get assumptions
+                               asPN <- sequence $ map (flip lookup pns) (assumptions r)
+                               let as = map nodeName asPN
+                               -- return ResultStr
+                               return $ ResultStr { rsType = t
+                                                  , rsName = resultName r
+                                                  , rsPredicate = resultPredicate r
+                                                  , rsDeductions = dsStr
+                                                  , rsAssumptions = as
+                                                  }
+          mkDStr (rs,dt) = do nsPN <- sequence $ map (flip lookup pns) rs
+                              let ns = map nodeName nsPN
+                              return (ns, show dt)
+
 assume :: NamedPredicate -> Proof -> Either String Proof
 assume np prf = case addAssumption np (proofGraph prf) of
                   Left errMsg -> Left errMsg
                   Right pg     -> Right prf { proofGraph = pg }
+
+getPredicateByNameM :: String -> Proof -> Maybe Predicate
+getPredicateByNameM n prf = getPredicateM n (proofGraph prf)
 
 {- Deduction Steps -}
 instantiateSchema :: String -> String -> PredicateMatching -> Proof -> Either String Proof

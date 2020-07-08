@@ -269,6 +269,29 @@ getVariableNames = getVNamesP'
           getVNamesPN' (PVar n) = [n]
           getVNamesPN' _        = []
 
+getPatterns :: Predicate -> ([Predicate],[Expression],[PName])
+getPatterns = getPatternsP'
+    where getPatternsP' (PExp e)        = getPatternsE' e
+          getPatternsP' (PExpT e _)     = getPatternsE' e
+          getPatternsP' (PBinary _ p q) = (getPatternsP' p) `join'` (getPatternsP' q)
+          getPatternsP' (PUnary _ p)    = getPatternsP' p
+          getPatternsP' (PBinding pb p) = (getPatternsPB' pb) `join'` (getPatterns p)
+          getPatternsP' (PPatVar n)     = ([PPatVar n],[],[])
+          getPatternsP' _               = ([],[],[])
+
+          getPatternsE' (ExpN pn)     = getPatternsPN' pn
+          getPatternsE' (ExpF _ es)   = foldl join' ([],[],[]) (map getPatternsE' es)
+          getPatternsE' (ExpPatVar n) = ([],[ExpPatVar n],[])
+          getPatternsE' _             = ([],[],[])
+
+          getPatternsPB' (Forall pn p) = (getPatternsPN' pn) `join'` (getPatternsP' p)
+          getPatternsPB' (Exists pn p) = (getPatternsPN' pn) `join'` (getPatternsP' p)
+
+          getPatternsPN' (NPatVar n) = ([],[],[NPatVar n])
+          getPatternsPN' _           = ([],[],[])
+
+          join' (ps,es,ns) (qs,fs,ms) = (nub (ps++qs), nub (es++fs), nub (ns++ms))
+
 {- ---------- Building Set Expressions ----------- -}
 {- TODO: these should be in Axioms.Set -}
 emptySet :: Expression

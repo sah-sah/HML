@@ -35,6 +35,7 @@ import HML.Logic.Predicates.Predicates
 import HML.Logic.Predicates.PredicateProofs
 import HML.Logic.Predicates.PredicateProofGraph
 import HML.Logic.Predicates.PredicateParser(predicate)
+import HML.Logic.Predicates.PredicateMatching(PredicateMatching(..))
 
 import HML.Logic.Predicates.PrettyPrintLaTeX
 
@@ -87,6 +88,8 @@ data Command = CQuit -- quit
              | CRead String
              | CAssume String String
              | CPrint String
+             | CDetails String
+             | CInstantiateSchema String String
     deriving (Show, Eq)
 
 -- | starts a Haskell Proof Assistant server
@@ -113,6 +116,8 @@ execCommand (Just cmap) = do cmd <- readCommand cmap
                                CNames        -> getNames cmap
                                CAxioms       -> getAxioms cmap
                                CPrint n      -> printName cmap n
+                               CDetails n    -> getDetails cmap n
+                               CInstantiateSchema n sn -> instSchema cmap n sn
                                CErr   -> liftIO $ putStrLn "Unknown command"
                              return (cmd /= CQuit)
 
@@ -135,6 +140,8 @@ readPredicate cmap str = case parse predicate "(unknown predicate)" str of
                            Right p -> do (prf,lcon) <- get
                                          returnUpdatedRequest cmap [ok',result' $ latexPPinContext lcon p]
 
+-- TODO: we should make a function assume' (n,p) prf
+-- that returns Right (prf',np) where np holds the details of the new predicate
 assumePredicate :: HPARequest -> String -> String -> HPA ()
 assumePredicate cmap n str = case parse predicate "(unknown predicate)" str of
                                Left pe -> returnUpdatedRequest cmap [fail', error' "Unable to read predicate"]
@@ -143,7 +150,65 @@ assumePredicate cmap n str = case parse predicate "(unknown predicate)" str of
                                                Left str   -> returnUpdatedRequest cmap [fail',error' str]
                                                Right prf' -> do put (prf',lcon)
                                                                 returnUpdatedRequest cmap [ok']
-    where
+
+instSchema :: HPARequest -> String -> String -> HPA ()
+instSchema cmap n sn = do -- get proof
+                          (prf,lcon) <- get
+                          -- get pattern matching from input
+                          case pmM prf of
+                            Nothing -> returnUpdatedRequest cmap [fail', error' "Unable to parse matching"]
+                            Just pm -> case instantiateSchema n sn pm prf of
+                                         Left str -> returnUpdatedRequest cmap [fail', error' str]
+                                         Right prf' -> do put (prf',lcon)
+                                                          returnUpdatedRequest cmap [ok']
+    where pmM prf = do p <- getPredicateByNameM sn prf
+                       -- get patvars
+                       let (ps,es,ns) = getPatterns p
+                       -- try to read each patvar from the JSON object
+                       psPR <- sequence $ map (\(PPatVar n) -> Map.lookup ("P{"++n++"}") cmap) ps
+                       esPR <- sequence $ map (\(ExpPatVar n) -> Map.lookup ("E{"++n++"}") cmap) es
+                       nsPR <- sequence $ map (\(NPatVar n) -> Map.lookup ("N{"++n++"}") cmap) ns
+                       -- try to parse the raw predicates
+                       psP <- sequence $ map parse' psPR
+                       esP <- sequence $ map parse' esPR
+                       nsP <- sequence $ map parse' nsPR
+                       -- get expressions and names from predicates
+                       esE <- sequence $ map getE' esP
+                       nsN <- sequence $ map getN' nsP
+                       -- construct a PredicateMatching
+                       return $ PMatching { predicatePatterns = zip (map (\(PPatVar n) -> n) ps) psP
+                                          , expressionPatterns = zip (map (\(ExpPatVar n) -> n) es) esE
+                                          , namePatterns = zip (map (\(NPatVar n) -> n) ns) nsN
+                                          }
+
+          parse' s = case parse predicate "(unknown predicate)" s of
+                       Left _  -> Nothing
+                       Right p -> Just p
+
+          getE' (PExp e)    = Just e
+          getE' (PExpT e _) = Just e
+          getE' _           = Nothing
+
+          getN' p = (getE' p) >>= \e ->
+                       case e of
+                         ExpN n -> Just n
+                         _      -> Nothing
+
+getDetails :: HPARequest -> String -> HPA ()
+getDetails cmap str = do (prf,lcon) <- get
+                         case getResultString str prf of
+                           Nothing -> returnUpdatedRequest cmap [fail']
+                           Just rs -> do -- update request with what we have
+                                         let cmap' = updateRequest cmap [ok'
+                                                                        ,("type",rsType rs)
+                                                                        ,(result' $ latexPPinContext lcon (rsPredicate rs))]
+                                         -- unpack the updated cmap
+                                         let currPairs = map (\(f,v) -> T.pack f .= v) (Map.toList cmap')
+                                         -- add in deductions ourselves
+                                         let morePairs = ["deductions" .= (map show $ rsDeductions rs)
+                                                         ,"assumptions" .= rsAssumptions rs]
+                                         -- return the response
+                                         liftIO $ C.putStrLn (encode $ object (currPairs++morePairs))
 
 -- TODO: we should update and return the original JSON object
 printName :: HPARequest -> String -> HPA ()
@@ -176,13 +241,15 @@ readCommand cmap = return $ maybe (CErr) id cmdM
                     readArgs cmd cmap
 
 readArgs :: String -> HPARequest -> Maybe Command
-readArgs "quit"   cmap = Just CQuit
-readArgs "read"   cmap = CRead <$> Map.lookup "predicate" cmap
-readArgs "names"  cmap = Just CNames
-readArgs "axioms" cmap = Just CAxioms
-readArgs "assume" cmap = CAssume <$> Map.lookup "name" cmap <*> Map.lookup "predicate" cmap
-readArgs "print"  cmap = CPrint <$> Map.lookup "name" cmap
-readArgs _        _    = Just CErr
+readArgs "quit"    cmap = Just CQuit
+readArgs "read"    cmap = CRead <$> Map.lookup "predicate" cmap
+readArgs "names"   cmap = Just CNames
+readArgs "axioms"  cmap = Just CAxioms
+readArgs "assume"  cmap = CAssume <$> Map.lookup "name" cmap <*> Map.lookup "predicate" cmap
+readArgs "print"   cmap = CPrint <$> Map.lookup "name" cmap
+readArgs "details" cmap = CDetails <$> Map.lookup "name" cmap
+readArgs "instantiateSchema" cmap = CInstantiateSchema <$> Map.lookup "name" cmap <*> Map.lookup "schema" cmap
+readArgs _         _    = Just CErr
 
 cmdParser :: Parser Command
 cmdParser =     try quitCmd
