@@ -56,6 +56,11 @@ printSetFn _           _     = Nothing
 latexPPinContext :: LaTeXContext -> Predicate -> String
 latexPPinContext lcon p = unpack $ render $ evalState (toLaTeXPred p) lcon
 
+latexPPinContextCursor :: LaTeXContext -> PredicateCursor -> String
+latexPPinContextCursor lcon (PC mp ds sp) = unpack $ replace "(@)" spL mpL
+    where mpL = pack (latexPPinContext lcon mp)
+          spL = pack ("\\left[" ++ latexPPinContext lcon sp ++ "\\right]")
+
 latexPrettyPrint :: Predicate -> String
 latexPrettyPrint p = unpack $ render $ evalState (toLaTeXPred p) lcon
     where lcon = updatePrintFunction printSetFn defaultContext

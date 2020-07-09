@@ -93,6 +93,8 @@ data Command = CQuit -- quit
              | CModusPonens String String String
              | CInstantiateAt String String String
              | CSplitAnd String String String
+             | CSetFocus String
+             | CMoveFocus String
     deriving (Show, Eq)
 
 -- | starts a Haskell Proof Assistant server
@@ -124,6 +126,8 @@ execCommand (Just cmap) = do cmd <- readCommand cmap
                                CModusPonens n pn pimpqn -> execModusPonens cmap n pn pimpqn
                                CInstantiateAt n fan vn -> execInstantiateAt cmap n fan vn
                                CSplitAnd pn qn pandq -> execSplitAnd cmap pn qn pandq
+                               CSetFocus n -> execSetFocus cmap n
+                               CMoveFocus d -> execMoveFocus cmap d
                                CErr   -> liftIO $ putStrLn "Unknown command"
                              return (cmd /= CQuit)
 
@@ -156,6 +160,19 @@ assumePredicate cmap n str = case parse predicate "(unknown predicate)" str of
                                                Left str   -> returnUpdatedRequest cmap [fail',error' str]
                                                Right prf' -> do put (prf',lcon)
                                                                 returnUpdatedRequest cmap [ok']
+
+execMoveFocus :: HPARequest -> String -> HPA ()
+execMoveFocus cmap d = returnUpdatedRequest cmap [fail']
+
+execSetFocus :: HPARequest -> String -> HPA ()
+execSetFocus cmap n = do (prf,lcon) <- get
+                         case focusOn n prf of
+                           Left str -> returnUpdatedRequest cmap [fail', error' str]
+                           Right prf' -> do put (prf',lcon)
+                                            let fM = proofFocus prf'
+                                            case fM of
+                                              Nothing -> returnUpdatedRequest cmap [fail', error' "Unknown error setting focus"]
+                                              Just f  -> returnUpdatedRequest cmap [ok', ("focus",latexPPinContextCursor lcon (focus f))]
 
 execSplitAnd :: HPARequest -> String -> String -> String -> HPA ()
 execSplitAnd cmap pn qn pandq = do (prf,lcon) <- get
@@ -291,6 +308,8 @@ readArgs "instantiateSchema" cmap = CInstantiateSchema <$> Map.lookup "name" cma
 readArgs "modusPonens" cmap = CModusPonens <$> Map.lookup "name" cmap <*> Map.lookup "pn" cmap <*> Map.lookup "pimpqn" cmap
 readArgs "instantiateAt" cmap = CInstantiateAt <$> Map.lookup "name" cmap <*> Map.lookup "fan" cmap <*> Map.lookup "xvarp" cmap
 readArgs "splitAnd" cmap = CSplitAnd <$> Map.lookup "pname" cmap <*> Map.lookup "qname" cmap <*> Map.lookup "pandq" cmap
+readArgs "setFocus" cmap = CSetFocus <$> Map.lookup "name" cmap
+readArgs "moveFocus" cmap = CMoveFocus <$> Map.lookup "direction" cmap
 readArgs _         _    = Just CErr
 
 cmdParser :: Parser Command
