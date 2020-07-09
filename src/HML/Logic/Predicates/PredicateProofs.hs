@@ -315,7 +315,9 @@ genInstantiation n fan vn fa prf = do -- bind predicate to forall form
           simpForm = patternP "Q"
 
 splitAnd :: (String,String) -> String -> Proof -> Either String Proof
-splitAnd (pn,qn) andn prf = do -- get predicate to split
+splitAnd (pn,qn) andn prf = do -- check it has the right form
+                               failOn (pn == qn) "Error(splitAnd): names must be different"
+                               -- get predicate to split
                                andP <- fromMaybe (getPredicateM andn (proofGraph prf))
                                                  "Error(splitAnd): unable to find predicate"
                                -- bind to and form

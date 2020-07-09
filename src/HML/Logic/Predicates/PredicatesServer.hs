@@ -90,6 +90,9 @@ data Command = CQuit -- quit
              | CPrint String
              | CDetails String
              | CInstantiateSchema String String
+             | CModusPonens String String String
+             | CInstantiateAt String String String
+             | CSplitAnd String String String
     deriving (Show, Eq)
 
 -- | starts a Haskell Proof Assistant server
@@ -118,6 +121,9 @@ execCommand (Just cmap) = do cmd <- readCommand cmap
                                CPrint n      -> printName cmap n
                                CDetails n    -> getDetails cmap n
                                CInstantiateSchema n sn -> instSchema cmap n sn
+                               CModusPonens n pn pimpqn -> execModusPonens cmap n pn pimpqn
+                               CInstantiateAt n fan vn -> execInstantiateAt cmap n fan vn
+                               CSplitAnd pn qn pandq -> execSplitAnd cmap pn qn pandq
                                CErr   -> liftIO $ putStrLn "Unknown command"
                              return (cmd /= CQuit)
 
@@ -150,6 +156,39 @@ assumePredicate cmap n str = case parse predicate "(unknown predicate)" str of
                                                Left str   -> returnUpdatedRequest cmap [fail',error' str]
                                                Right prf' -> do put (prf',lcon)
                                                                 returnUpdatedRequest cmap [ok']
+
+execSplitAnd :: HPARequest -> String -> String -> String -> HPA ()
+execSplitAnd cmap pn qn pandq = do (prf,lcon) <- get
+                                   case splitAnd (pn,qn) pandq prf of
+                                     Left str -> returnUpdatedRequest cmap [fail', error' str]
+                                     Right prf' -> do put (prf',lcon)
+                                                      returnUpdatedRequest cmap [ok']
+
+execModusPonens :: HPARequest -> String -> String -> String -> HPA ()
+execModusPonens cmap n pn pimpqn = do -- get proof
+                                      (prf,lcon) <- get
+                                      case modusPonens n pn pimpqn prf of
+                                        Left str   -> returnUpdatedRequest cmap [fail', error' str]
+                                        Right prf' -> do put (prf',lcon)
+                                                         returnUpdatedRequest cmap [ok']
+
+execInstantiateAt :: HPARequest -> String -> String -> String -> HPA ()
+execInstantiateAt cmap n fan xvarp = case xnM of
+                                       Nothing -> returnUpdatedRequest cmap [fail', error' "Predicate for variable was not a variable"]
+                                       Just xn -> do (prf,lcon) <- get
+                                                     case instantiateAt n fan xn prf of
+                                                       Left str   -> returnUpdatedRequest cmap [fail', error' str]
+                                                       Right prf' -> do put (prf',lcon)
+                                                                        returnUpdatedRequest cmap [ok']
+    where xnM = case parse predicate "(unknown predicate)" xvarp of
+                  Left _  -> Nothing
+                  Right p -> getN' p
+
+          getN' (PExp  (ExpN (PVar n))  ) = Just n
+          getN' (PExpT (ExpN (PVar n)) _) = Just n
+          getN' _                         = Nothing
+
+
 
 instSchema :: HPARequest -> String -> String -> HPA ()
 instSchema cmap n sn = do -- get proof
@@ -249,6 +288,9 @@ readArgs "assume"  cmap = CAssume <$> Map.lookup "name" cmap <*> Map.lookup "pre
 readArgs "print"   cmap = CPrint <$> Map.lookup "name" cmap
 readArgs "details" cmap = CDetails <$> Map.lookup "name" cmap
 readArgs "instantiateSchema" cmap = CInstantiateSchema <$> Map.lookup "name" cmap <*> Map.lookup "schema" cmap
+readArgs "modusPonens" cmap = CModusPonens <$> Map.lookup "name" cmap <*> Map.lookup "pn" cmap <*> Map.lookup "pimpqn" cmap
+readArgs "instantiateAt" cmap = CInstantiateAt <$> Map.lookup "name" cmap <*> Map.lookup "fan" cmap <*> Map.lookup "xvarp" cmap
+readArgs "splitAnd" cmap = CSplitAnd <$> Map.lookup "pname" cmap <*> Map.lookup "qname" cmap <*> Map.lookup "pandq" cmap
 readArgs _         _    = Just CErr
 
 cmdParser :: Parser Command
