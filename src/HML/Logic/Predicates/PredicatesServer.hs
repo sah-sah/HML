@@ -102,6 +102,7 @@ data Command = CQuit -- quit
              | CRecordFocus String
              | CClearFocus
              | CGeneralise String String String
+             | CLiftResult String String String
     deriving (Show, Eq)
 
 -- | starts a Haskell Proof Assistant server
@@ -139,6 +140,7 @@ execCommand (Just cmap) = do cmd <- readCommand cmap
                                CRecordFocus n -> execRecordFocus cmap n
                                CClearFocus -> execClearFocus cmap
                                CGeneralise n rn vn -> execGeneraliseWith cmap n rn vn
+                               CLiftResult n rn an -> execLiftResult cmap n rn an
                                CErr   -> liftIO $ putStrLn "Unknown command"
                              return (cmd /= CQuit)
 
@@ -171,6 +173,13 @@ assumePredicate cmap n str = case parse predicate "(unknown predicate)" str of
                                                Left str   -> returnUpdatedRequest cmap [fail',error' str]
                                                Right prf' -> do put (prf',lcon)
                                                                 returnUpdatedRequest cmap [ok']
+
+execLiftResult :: HPARequest -> String -> String -> String -> HPA ()
+execLiftResult cmap n rn an = do (prf,lcon) <- get
+                                 case liftResult n rn an prf of
+                                   Left str   -> returnUpdatedRequest cmap [fail', error' str]
+                                   Right prf' -> do put (prf',lcon)
+                                                    returnUpdatedRequest cmap [ok']
 
 execGeneraliseWith :: HPARequest -> String -> String -> String -> HPA ()
 execGeneraliseWith cmap n rn vn = case vnM of
@@ -319,6 +328,7 @@ instSchema cmap n sn = do -- get proof
                          ExpN n -> Just n
                          _      -> Nothing
 
+--RequestStr should be an instance of toJSON
 getDetails :: HPARequest -> String -> HPA ()
 getDetails cmap str = do (prf,lcon) <- get
                          case getResultString str prf of
@@ -383,6 +393,7 @@ readArgs "transformFocus" cmap = CTransformFocus <$> Map.lookup "name" cmap
 readArgs "recordFocus" cmap = CRecordFocus <$> Map.lookup "name" cmap
 readArgs "clearFocus" cmap = Just CClearFocus
 readArgs "generalise" cmap = CGeneralise <$> Map.lookup "name" cmap <*> Map.lookup "result" cmap <*> Map.lookup "var" cmap
+readArgs "liftResult" cmap = CLiftResult <$> Map.lookup "name" cmap <*> Map.lookup "result" cmap <*> Map.lookup "assumption" cmap
 readArgs _         _    = Just CErr
 
 cmdParser :: Parser Command
