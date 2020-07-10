@@ -386,7 +386,7 @@ recordFocus :: String -> Proof -> Either String Proof
 -- TODO: need to record the name of the result used in the focus
 recordFocus n prf = do -- get the focus
                        f <- fromMaybe (proofFocus prf)
-                                      "Error(transformFocus): no focus"
+                                      "Error(recordFocus): no focus"
                        -- try to add the result
                        pg <- addResult (n,healPredicate $ focus f)
                                        [focusName f]

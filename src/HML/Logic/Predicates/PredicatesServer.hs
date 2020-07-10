@@ -36,6 +36,7 @@ import HML.Logic.Predicates.PredicateProofs
 import HML.Logic.Predicates.PredicateProofGraph
 import HML.Logic.Predicates.PredicateParser(predicate)
 import HML.Logic.Predicates.PredicateMatching(PredicateMatching(..))
+import HML.Logic.Predicates.PredicateCursors(Direction(..))
 
 import HML.Logic.Predicates.PrettyPrintLaTeX
 
@@ -54,6 +55,8 @@ import Control.Monad
 import Text.Parsec hiding ((<|>))
 import Text.Parsec.Expr
 import Text.Parsec.String(Parser)
+
+import Text.Read(readMaybe)
 
 -- for JSON data
 import GHC.Generics
@@ -95,6 +98,10 @@ data Command = CQuit -- quit
              | CSplitAnd String String String
              | CSetFocus String
              | CMoveFocus String
+             | CTransformFocus String
+             | CRecordFocus String
+             | CClearFocus
+             | CGeneralise String String String
     deriving (Show, Eq)
 
 -- | starts a Haskell Proof Assistant server
@@ -128,6 +135,10 @@ execCommand (Just cmap) = do cmd <- readCommand cmap
                                CSplitAnd pn qn pandq -> execSplitAnd cmap pn qn pandq
                                CSetFocus n -> execSetFocus cmap n
                                CMoveFocus d -> execMoveFocus cmap d
+                               CTransformFocus ll -> execTransformFocus cmap ll
+                               CRecordFocus n -> execRecordFocus cmap n
+                               CClearFocus -> execClearFocus cmap
+                               CGeneralise n rn vn -> execGeneraliseWith cmap n rn vn
                                CErr   -> liftIO $ putStrLn "Unknown command"
                              return (cmd /= CQuit)
 
@@ -161,8 +172,66 @@ assumePredicate cmap n str = case parse predicate "(unknown predicate)" str of
                                                Right prf' -> do put (prf',lcon)
                                                                 returnUpdatedRequest cmap [ok']
 
+execGeneraliseWith :: HPARequest -> String -> String -> String -> HPA ()
+execGeneraliseWith cmap n rn vn = case vnM of
+                                    Nothing -> returnUpdatedRequest cmap [fail', error' "Predicate for variable was not a variable"]
+                                    Just xn -> do (prf,lcon) <- get
+                                                  case generaliseWith n rn xn prf of
+                                                    Left str   -> returnUpdatedRequest cmap [fail', error' str]
+                                                    Right prf' -> do put (prf',lcon)
+                                                                     returnUpdatedRequest cmap [ok']
+    where vnM = case parse predicate "(unknown predicate)" vn of
+                  Left _  -> Nothing
+                  Right p -> getN' p
+
+          getN' (PExp  (ExpN (PVar n))  ) = Just n
+          getN' (PExpT (ExpN (PVar n)) _) = Just n
+          getN' _                         = Nothing
+
+execClearFocus :: HPARequest -> HPA ()
+execClearFocus cmap = do (prf,lcon) <- get
+                         put (clearFocus prf, lcon)
+                         returnUpdatedRequest cmap [ok']
+
+execRecordFocus :: HPARequest -> String -> HPA ()
+execRecordFocus cmap n = do (prf,lcon) <- get
+                            case recordFocus n prf of
+                              Left str   -> returnUpdatedRequest cmap [fail', error' str]
+                              Right prf' -> do put (prf',lcon)
+                                               returnUpdatedRequest cmap [ok']
+
+execTransformFocus :: HPARequest -> String -> HPA ()
+execTransformFocus cmap ll = do (prf,lcon) <- get
+                                case transformFocus ll prf of
+                                  Left str   -> returnUpdatedRequest cmap [fail', error' str]
+                                  Right prf' -> do put (prf',lcon)
+                                                   let fM = proofFocus prf'
+                                                   case fM of
+                                                     Nothing -> returnUpdatedRequest cmap [fail', error' "Unknown error transforming focus"]
+                                                     Just f  -> returnUpdatedRequest cmap [ok', ("focus",latexPPinContextCursor lcon (focus f))]
+
 execMoveFocus :: HPARequest -> String -> HPA ()
-execMoveFocus cmap d = returnUpdatedRequest cmap [fail']
+execMoveFocus cmap dStr = case getD' dStr of
+                            Nothing -> returnUpdatedRequest cmap [fail', error' "Invaild directions"]
+                            Just d  -> do (prf,lcon) <- get
+                                          case moveFocus d prf of
+                                            Left str   -> returnUpdatedRequest cmap [fail', error' str]
+                                            Right prf' -> do put (prf',lcon)
+                                                             let fM = proofFocus prf'
+                                                             case fM of
+                                                               Nothing -> returnUpdatedRequest cmap [fail', error' "Unknown error moving focus"]
+                                                               Just f  -> returnUpdatedRequest cmap [ok', ("focus",latexPPinContextCursor lcon (focus f))]
+    where getD' "up"     = Just [DUp]
+          getD' "right"  = Just [DRight]
+          getD' "down"   = Just [DDown]
+          getD' "left"   = Just [DLeft]
+          getD' "branch" = do bStr <- Map.lookup "branch" cmap
+                              b <- readMaybe bStr
+                              return $ [DBranch b]
+          getD' _        = Nothing
+
+
+--moveFocus :: [Direction] -> Proof -> Either String Proof
 
 execSetFocus :: HPARequest -> String -> HPA ()
 execSetFocus cmap n = do (prf,lcon) <- get
@@ -310,6 +379,10 @@ readArgs "instantiateAt" cmap = CInstantiateAt <$> Map.lookup "name" cmap <*> Ma
 readArgs "splitAnd" cmap = CSplitAnd <$> Map.lookup "pname" cmap <*> Map.lookup "qname" cmap <*> Map.lookup "pandq" cmap
 readArgs "setFocus" cmap = CSetFocus <$> Map.lookup "name" cmap
 readArgs "moveFocus" cmap = CMoveFocus <$> Map.lookup "direction" cmap
+readArgs "transformFocus" cmap = CTransformFocus <$> Map.lookup "name" cmap
+readArgs "recordFocus" cmap = CRecordFocus <$> Map.lookup "name" cmap
+readArgs "clearFocus" cmap = Just CClearFocus
+readArgs "generalise" cmap = CGeneralise <$> Map.lookup "name" cmap <*> Map.lookup "result" cmap <*> Map.lookup "var" cmap
 readArgs _         _    = Just CErr
 
 cmdParser :: Parser Command
