@@ -340,7 +340,7 @@ getDetails cmap str = do (prf,lcon) <- get
                                          -- unpack the updated cmap
                                          let currPairs = map (\(f,v) -> T.pack f .= v) (Map.toList cmap')
                                          -- add in deductions ourselves
-                                         let morePairs = ["deductions" .= (map show $ rsDeductions rs)
+                                         let morePairs = ["deductions" .= rsDeductions rs
                                                          ,"assumptions" .= rsAssumptions rs]
                                          -- return the response
                                          liftIO $ C.putStrLn (encode $ object (currPairs++morePairs))
