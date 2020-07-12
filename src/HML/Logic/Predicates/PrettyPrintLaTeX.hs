@@ -42,6 +42,9 @@ data LaTeXContext = LCon { printFunction :: String -> [LaTeX] -> Maybe LaTeX }
 defaultContext :: LaTeXContext
 defaultContext = LCon { printFunction = (\s ls -> Nothing) }
 
+setLaTeXContext :: LaTeXContext
+setLaTeXContext = updatePrintFunction printSetFn defaultContext
+
 updatePrintFunction :: (String -> [LaTeX] -> Maybe LaTeX) -> LaTeXContext -> LaTeXContext
 updatePrintFunction f lcon = lcon { printFunction = newPrintFunction }
     where newPrintFunction n args = (f n args) `mplus` (printFunction lcon n args)
@@ -51,6 +54,7 @@ printSetFn :: String -> [LaTeX] -> Maybe LaTeX
 printSetFn "setElem"   [a,b] = Just $ M.in_ a b
 printSetFn "setSubset" [a,b] = Just $ M.subset a b
 printSetFn "setEqual"  [a,b] = Just $ (M.=:) a b
+printSetFn "setUnion"  [a,b] = Just $ M.cup a b
 printSetFn _           _     = Nothing
 
 latexPPinContext :: LaTeXContext -> Predicate -> String
