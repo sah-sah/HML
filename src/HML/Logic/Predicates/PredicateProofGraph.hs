@@ -46,6 +46,8 @@ Each node represents a result, with a special root node to represent axioms
 
 Need a focus, separate from the graph
 
+-- TODO: we need a way to check that predicates are well-defined, have the correct type
+-- So we don't treat e.g. T & 2 as a meaningful result
 -}
 -- should this be in logic laws ?
 type NamedPredicate = (String, Predicate)
@@ -57,6 +59,8 @@ type NamedPredicate = (String, Predicate)
 -- size, the number of nodes which start from 0
 -- NOTE: we could replae nextNode with a function in the fgl library
 -- that will give a valid new node id
+-- TODO: keep a separate list of AxiomSchema, so they can't be used directly
+-- but must be instantiated
 data ProofGraph = ProofGraph { proofGraph :: Gr ProofNode ()
                              , nextNode :: Int }
     deriving (Show)
@@ -92,6 +96,10 @@ data DeductionType = InstantiateSchema
                    | LogicLaw [FocusStep]
                    | UniversalGeneralisation
                    | LiftResult
+                   | JoinAnd
+                   | JoinOr
+                   | RenameFreeVariable
+                   | MakeSchema
     deriving (Show)
 
 data FocusStep = Transform String

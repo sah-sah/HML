@@ -292,6 +292,60 @@ getPatterns = getPatternsP'
 
           join' (ps,es,ns) (qs,fs,ms) = (nub (ps++qs), nub (es++fs), nub (ns++ms))
 
+renameFreeVariable :: String -> String -> Predicate -> Predicate
+-- would be easier if Predicate was a functor
+renameFreeVariable xn yn p = renameP' p
+    where renameP' (PExp e)         = PExp (renameE' e)
+          renameP' (PExpT e t)      = PExpT (renameE' e) t
+          renameP' (PBinary op p q) = PBinary op (renameP' p) (renameP' q)
+          renameP' (PUnary op p)    = PUnary op (renameP' p)
+          renameP' (PBinding pb p)  = if captured' pb then PBinding pb p
+                                                      else PBinding (renamePB' pb) (renameP' p)
+          renameP' p                = p
+
+          renamePB' (Forall pn p) = Forall (renamePN' pn) (renameP' p)
+          renamePB' (Exists pn p) = Exists (renamePN' pn) (renameP' p)
+
+          renameE' (ExpN pn)   = ExpN (renamePN' pn)
+          renameE' (ExpF n es) = ExpF n (map renameE' es)
+          renameE' e           = e
+
+          renamePN' (PVar n) = PVar (if n == xn then yn else n)
+          renamePN' pn       = pn
+
+          captured' (Forall (PVar n) _) = n == xn
+          captured' (Exists (PVar n) _) = n == xn
+          captured' _                   = False
+
+renameBoundVariable :: String -> String -> Predicate -> Predicate
+renameBoundVariable xn yn p@(PBinding (Forall (PVar n) q) r) | n == xn   = PBinding (Forall (PVar n) (renameFreeVariable xn yn q)) (renameFreeVariable xn yn r)
+                                                             | otherwise = p
+renameBoundVariable xn yn p@(PBinding (Exists (PVar n) q) r) | n == xn   = PBinding (Exists (PVar n) (renameFreeVariable xn yn q)) (renameFreeVariable xn yn r)
+                                                             | otherwise = p
+
+varToPatterns :: Predicate -> Predicate
+varToPatterns = vtpP'
+    where vtpP' (PExp e)         = case vtpE' e of
+                                     ExpPatVar n -> PPatVar n
+                                     e'          -> PExp e'
+          vtpP' (PExpT e t)      = PExpT (vtpE' e) t
+          vtpP' (PBinary op p q) = PBinary op (vtpP' p) (vtpP' q)
+          vtpP' (PUnary op p)    = PUnary op (vtpP' p)
+          vtpP' (PBinding pb p)  = PBinding (vtpPB' pb) (vtpP' p)
+          vtpP' p                = p
+
+          vtpPB' (Forall pn p) = Forall (vtpPN' pn) (vtpP' p)
+          vtpPB' (Exists pn p) = Exists (vtpPN' pn) (vtpP' p)
+
+          vtpE' (ExpN pn)   = case vtpPN' pn of
+                                NPatVar n -> ExpPatVar n
+                                pn'       -> ExpN pn'
+          vtpE' (ExpF n es) = ExpF n (map vtpE' es)
+          vtpE' e           = e
+
+          vtpPN' (PVar n) = NPatVar n
+          vtpPN' pn       = pn
+
 {- ---------- Building Set Expressions ----------- -}
 {- TODO: these should be in Axioms.Set -}
 emptySet :: Expression

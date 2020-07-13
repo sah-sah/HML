@@ -56,6 +56,15 @@ Need a context to describe how to show functions and the like
 See MathJax for latex in webpages
 standalone document class in latex
 use a font that supports math symbols
+
+-- TODO: add joinAnd given results P1,P2 get P1 & P2 DONE
+--           joinOr given a result P and any predicate Q, get P | Q DONE
+--           more general modusPonens given P -> Q and P1,...,Pn DONE
+--              check whether P1,...,Pn show that P is true
+--           modusPonens under the forall forall x s.t. P(x). Q(x) -> R(x)
+--               and P(y) & Q(y), deduce R(y)
+--           renaming variables Partially done
+--           create schema, given P return P with variables converted to patterns DONE
 -}
 
 {- ---------- Data Types ---------- -}
@@ -115,34 +124,6 @@ indent n str = sps ++ indent' str
           indent' (c:cs) = if c == '\n' then (c:sps) ++ indent' cs
                                         else c:(indent' cs)
 
-{-
-{- ---------- Moving through proofs data types ---------- -}
-
--- NOTE: there are two reasons we could get Nothing, the proof path is incorrect
--- or the passed function returns Nothing
-atSubProof' :: ProofPath -> (Proof -> Maybe a) -> Proof -> Maybe a
-atSubProof' []     fn prf = Nothing
-atSubProof' [n]    fn prf = if n == proofName prf then fn prf else Nothing
-atSubProof' (n:ns) fn prf = if n == proofName prf then foldl1 mplus $ map (atSubProof' ns fn) (subProofs prf) else Nothing
-
-untilSubProof' :: ProofPath -> (Proof -> [a]) -> Proof -> [a]
-untilSubProof' []     fn prf = []
-untilSubProof' [n]    fn prf = if n == proofName prf then fn prf else []
-untilSubProof' (n:ns) fn prf = if n == proofName prf then (fn prf) ++ concatMap (untilSubProof' ns fn) (subProofs prf) else [] 
-
-updateSubProof' :: ProofPath -> (Proof -> Maybe Proof) -> Proof -> Maybe Proof
--- returns Nothing if the update fails, returns unchanged proof if the proof path is invalid
-updateSubProof' pp fn prf = case update' pp fn prf of
-                              (False,_) -> Nothing
-                              (True,prf') -> prf'
-    where update' []     fn prf = (False,Just prf)
-          update' [n]    fn prf = if n == proofName prf then (True,fn prf) else (False,Just prf)
-          update' (n:ns) fn prf = if n == proofName prf then let sps = map (update' ns fn) (subProofs prf)
-                                                             in (any fst sps 
-                                                                ,do sps' <- sequence $ map snd sps
-                                                                    return $ prf { subProofs = sps' })
-                                                        else (False,Just prf) 
--}
 {- ---------- Creating new proofs and sub proofs ---------- -}
 
 startProof :: [NamedPredicate] -> Proof
@@ -250,10 +231,12 @@ modusPonensIff n sns p piffq prf =
           eplus e@(Left _)  f = f
           eplus e@(Right _) f = e
 
+-- NOTE: I think this is too general, we should just check whether p in pimpq is equal to p (not whether it can be bound)
+-- we can use the focus to more general transformations
 modusPonensImp :: String -> [String] -> Bool -> Predicate -> Predicate -> Proof -> Either String Proof
 modusPonensImp n sns isIff p pimpq prf = do -- match pimpq to P -> Q
                                             imp <- fromMaybe (bindToForm impForm pimpq)
-                                                             "Error(modusPonensImp): upable to bind P->Q"
+                                                             "Error(modusPonensImp): unable to bind P->Q"
                                             -- get P from matching
                                             pForm <- fromMaybe (getPMatch "P" imp)
                                                                "Error(modusPonensImp): unable to extract P from P -> Q"
@@ -274,7 +257,79 @@ modusPonensImp n sns isIff p pimpq prf = do -- match pimpq to P -> Q
                                             return $ prf { proofGraph = pg }
 
     where impForm = patternP "P" `impP` patternP "Q"
-          pForm   = patternP "P"
+
+modusPonensGen :: String -> [String] -> String -> Proof -> Either String Proof
+-- modusPonens (pns,prf) pn pimpqn tries to apply modus ponens
+-- where pn is the name of predicate P, and pimpqn is the name of
+-- the predicate P -> Q (or P <-> Q)
+-- Do separate functions for using P -> Q and P <-> Q
+modusPonensGen n pns pimpqn prf = do -- get predicate P
+                                    ps <- fromMaybe (sequence $ map (\pn -> getPredicateM pn (proofGraph prf)) pns)
+                                                   "Error(modusPonensGen): unable to find predicates"
+                                    -- get predicate P -> Q/P <-> Q
+                                    pimpq <- fromMaybe (getPredicateM pimpqn (proofGraph prf))
+                                                       "Error(modusPonensGen): unable to find predicate P->Q"
+                                    -- check P->Q predicate has the correct form
+                                    failOn (not (isImp pimpq || isIff pimpq))
+                                           "Error(modusPonensGen): P -> Q is not an implication or equivalence"
+                                    -- split into imp and iff cases
+                                    if isImp pimpq then modusPonensGenImp n (pimpqn:pns) False ps pimpq prf
+                                                   else modusPonensGenIff n (pimpqn:pns) ps pimpq prf
+    where isImp (PBinary PImp _ _) = True
+          isImp _                  = False
+
+          isIff (PBinary PIff _ _) = True
+          isIff _                  = False
+
+modusPonensGenIff :: String -> [String] -> [Predicate] -> Predicate -> Proof -> Either String Proof
+modusPonensGenIff n sns ps piffq prf =
+        modusPonensGenImp n sns True ps (pimpq piffq) prf `eplus` modusPonensGenImp n sns True ps (qimpp piffq) prf
+                                                          `eplus` (Left "Error(modusPonenGenIff): unable to apply in either direction")
+    where pimpq (PBinary PIff p q) = PBinary PImp p q
+          qimpp (PBinary PIff p q) = PBinary PImp q p
+
+          eplus e@(Left _)  f = f
+          eplus e@(Right _) f = e
+
+modusPonensGenImp :: String -> [String] -> Bool -> [Predicate] -> Predicate -> Proof -> Either String Proof
+-- we assume there are no patterns in the predicates so we can just check for equality
+modusPonensGenImp n sns isIff ps pimpq prf = do -- match pimpq to P -> Q
+                                               imp <- fromMaybe (bindToForm impForm pimpq)
+                                                                "Error(modusPonensGen): unable to bind P->Q"
+                                               -- get P from matching
+                                               p <- fromMaybe (getPMatch "P" imp)
+                                                              "Error(modusPonensGen): unable to extract P from P -> Q"
+                                               -- can we use ps to satisfy p?
+                                               failOn (not $ satisfy ps p)
+                                                      "Error(modusPonensGen): unable to satisfy P of P -> Q"
+                                               -- get Q from matching
+                                               q <- fromMaybe (getPMatch "Q" imp)
+                                                              "Error(modusPonensGen): unable to extract Q from P -> Q"
+                                               -- get deduction type
+                                               let dt = ModusPonens (if isIff then DDIff else DDImp)
+                                               -- add the result to the proof graph
+                                               pg <- addResult (n,q) sns dt (proofGraph prf)
+                                               -- return the proof
+                                               return $ prf { proofGraph = pg }
+    where impForm = patternP "P" `impP` patternP "Q"
+
+          satisfy :: [Predicate] -> Predicate -> Bool
+          satisfy ps p | p `elem` ps = True
+                       | otherwise   = case p of
+                                         PBinary op x y -> let bx = satisfy ps x
+                                                               by = satisfy ps y
+                                                           in evalBOp op bx by
+                                         PUnary op x    -> let bx = satisfy ps x
+                                                           in evalUOp op bx
+                                         _              -> False
+
+          evalBOp PAnd x y = x && y
+          evalBOp POr  x y = x || y
+          evalBOp PXOr x y = (x && not y) || (not x && y)
+          evalBOp PImp x y = not x || y
+          evalBOp PIff x y = x == y
+
+          evalUOp PNot x = not x
 
 instantiateAt :: String -> String -> String -> Proof -> Either String Proof
 -- instantiateAt (pp,prf) fan vn instantiates a predicate of
@@ -336,6 +391,26 @@ splitAnd (pn,qn) andn prf = do -- check it has the right form
                                return $ prf { proofGraph = pg' }
     where andForm = (patternP "P") `andP` (patternP "Q")
 
+joinAnd :: String -> (String,String) -> Proof -> Either String Proof
+-- | joinAnd n (pn,qn) updates result with new result p&q with name n
+joinAnd n (pn,qn) prf = do -- get predicates
+                           p <- fromMaybe (getPredicateM pn (proofGraph prf))
+                                          "Error(joinAnd): unable to find predicate"
+                           q <- fromMaybe (getPredicateM qn (proofGraph prf))
+                                          "Error(joinAnd): unable to find predicate"
+                           -- add p&q to graph
+                           pg <- addResult (n,p `andP` q) [pn,qn] JoinAnd (proofGraph prf)
+                           -- return the new proof
+                           return $ prf { proofGraph = pg }
+
+joinOr :: String -> String -> Predicate -> Proof -> Either String Proof
+-- | joinOr n pn q prf returns new proof with result p | q named n
+joinOr n pn q prf = do p <- fromMaybe (getPredicateM pn (proofGraph prf))
+                                      "Error(joinOr): unable to find predicate"
+                       pg <- addResult (n,p `orP` q) [pn] JoinOr (proofGraph prf)
+                       -- return the new proof
+                       return $ prf { proofGraph = pg }
+
 focusOn :: String -> Proof -> Either String Proof
 focusOn pn prf = do -- get predicate
                     p <- fromMaybe (getPredicateM pn (proofGraph prf))
@@ -382,6 +457,13 @@ transformFocus eqn prf = do -- get predicate
                             return $ prf { proofFocus = Just $ f { focus = npc
                                                                  , focusHistory = fh }}
 
+{-
+renameBoundVariableInFocus :: String -> String -> Proof -> Either String Proof
+renameBoundVariableInFocus xn yn prf = do f <- fromMaybe (proofFocus prf)
+                                          "Error(transformFocus): no focus"
+                                          undefined -- TODO: need to add equivalent function in PredicateCursors
+-}
+
 recordFocus :: String -> Proof -> Either String Proof
 -- TODO: need to record the name of the result used in the focus
 recordFocus n prf = do -- get the focus
@@ -396,11 +478,25 @@ recordFocus n prf = do -- get the focus
                        return $ prf { proofGraph = pg }
 
 
+renameFreeVariableInResult :: String -> String -> String -> String -> Proof -> Either String Proof
+renameFreeVariableInResult n pn xn yn prf = do -- get predicate to rename
+                                               p <- fromMaybe (getPredicateM pn (proofGraph prf))
+                                                              "Error(renameFreeVariableInResult): unable to find predicate"
+                                               -- rename the variable
+                                               let p' = renameFreeVariable xn yn p
+                                               -- check we have actually renamed something
+                                               failOn (p == p')
+                                                      "Error(renameFreeVariableInResult): no variable renamed"
+                                               -- add the result
+                                               pg <- addResult (n,p') [pn] RenameFreeVariable (proofGraph prf)
+                                               -- return the new proof
+                                               return $ prf { proofGraph = pg }
+
 generaliseWith :: String -> String -> String -> Proof -> Either String Proof
 generaliseWith n pn vn prf = do -- get predicate to generalise
                                 p <- fromMaybe (getPredicateM pn (proofGraph prf))
                                                "Error(generaliseWith): unable to find predicate"
-                                -- check new variable is not bound in predicate
+                                -- check new variable is not bound in predicate -- TODO: is this needed???
                                 failOn (isBound (varN vn) p)
                                        "Error(generaliseWith): variable cannot be bound in predicate"
                                 -- generalise the predicate
@@ -423,6 +519,24 @@ liftResult n rn an prf = do -- get predicate to lift
                             return $ prf { proofGraph = pg }
 
 
+createSchema :: String -> String -> Proof -> Either String Proof
+createSchema n rn prf = do -- get result to use
+                           (_,pn) <- fromMaybe (getNodeN rn (proofGraph prf))
+                                               "Error(createSchema): unable to find result"
+                           -- check it has no assumptions
+                           failOn (length (nodeAssumptions pn) > 0)
+                                  "Error(createSchema): cannot create schema from result with assumptions"
+                           -- get predicate
+                           let p = nodePredicate pn
+                           -- change var names to patterns
+                           let sp = varToPatterns p
+                           -- check there were patterns
+                           failOn (p == sp) "Error(createSchema): no names to generalise over"
+                           -- add the result (TODO: we will need to change this to addSchema when we have figured out how to deal with schemas)
+                           pg <- addResult (n,sp) [rn] MakeSchema (proofGraph prf)
+                           -- return the new proof
+                           return $ prf { proofGraph = pg }
+
 proveAssumption :: String -> String -> Proof -> Either String Proof
 proveAssumption an rn prf = do -- get assumption for to prove
                                a <- fromMaybe (getPredicateM an (proofGraph prf))
@@ -436,3 +550,4 @@ proveAssumption an rn prf = do -- get assumption for to prove
                                pg <- mergeAssumption an rn (proofGraph prf)
                                -- return the new proof
                                return $ prf { proofGraph = pg }
+

@@ -34,7 +34,24 @@ import Data.Either(fromRight)
 => 
 -}
 
-
+test1 = startProof (standardAxioms)
+test2 = fromRight (error "Step failed") $ assume ("A1",p) test1
+    where p = expP $ namedExp $ varN "P"
+test3 = fromRight (error "Step failed") $ assume ("A2",q) test2
+    where q = expP $ namedExp $ varN "Q"
+test4 = fromRight (error "Step failed") $ joinAnd "R1" ("A1","A2") test3
+test5 = fromRight (error "Step failed") $ joinOr "R2" "R1" (expP $ namedExp $ varN "R") test4
+test6 = fromRight (error "Step failed") $ assume ("A3",(p `orP` q) `impP` r) test5
+    where p = expP $ namedExp $ varN "P"
+          q = expP $ namedExp $ varN "Q"
+          r = expP $ namedExp $ varN "R"
+test7 = fromRight (error "Step failed") $ modusPonensGen "R3" ["A1"] "A3" test6
+test8 = fromRight (error "Step failed") $ assume ("A4",p) test7
+    where p = expP $ namedExp $ varN "x"
+test9 = fromRight (error "Step failed") $ renameFreeVariableInResult "R4" "A4" "x" "y" test8
+test10 = fromRight (error "Step failed") $ liftResult "R5" "R3" "A3" test9
+test11 = fromRight (error "Step failed") $ liftResult "R6" "R5" "A1" test10
+test12 = fromRight (error "Step failed") $ createSchema "S1" "R6" test11
 
 -- start the proof
 egProof = startProof (standardAxioms ++ setAxioms)
@@ -141,3 +158,5 @@ egProof34 = fromRight (error "Step failed") $ generaliseWith "R20" "R18" "y" egP
 egProof35 = fromRight (error "Step failed") $ modusPonens "R21" "R20" "R19" egProof34
 
 egProof36 = fromRight (error "Step failed") $ liftResult "R22" "R21" "A1" egProof35
+
+egProof37 = fromRight (error "Step failed") $ createSchema "S1" "R22" egProof36
