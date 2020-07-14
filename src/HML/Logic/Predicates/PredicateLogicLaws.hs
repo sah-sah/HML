@@ -12,6 +12,7 @@ import HML.Logic.Predicates.PredicateMatching
 
 --import Data.List(sortBy)
 import Control.Monad(mplus)
+import Control.Applicative((<$>))
 
 matchLogicLaw, matchF, matchB :: Predicate -> PredicateCursor -> Bool
 --matchLogicLaw ll pc returns true if the logic law
@@ -60,6 +61,21 @@ apF ll cp = maybe (error "apF: cannot apply logic law") id (apF_M ll cp)
 apB ll cp = maybe (error "apB: cannot apply logic law") id (apB_M ll cp)
 --apF is an unsafe version of apF_M
 apLogicLaw ll cp = maybe (error "apLogicLaw: cannot apply logic law") id (apLogicLawM ll cp)
+
+renameBoundVariableAtCut :: String -> String -> PredicateCursor -> Maybe PredicateCursor
+renameBoundVariableAtCut xn yn (PC mp ds sp) = if yn `elem` (getVariableNames mp ++ getVariableNames sp)
+                                               then Nothing
+                                               else (PC mp ds) <$> sp'
+    where sp' = case sp of
+                  PBinding (Forall (PVar bv) bp) p -> do bp' <- renameFreeVariable xn yn bp
+                                                         p' <- renameFreeVariable xn yn p
+                                                         if bv == xn then Just (PBinding (Forall (PVar yn) bp') p')
+                                                                     else Nothing
+                  PBinding (Exists (PVar bv) bp) p -> do bp' <- renameFreeVariable xn yn bp
+                                                         p' <- renameFreeVariable xn yn p
+                                                         if bv == xn then Just (PBinding (Exists (PVar yn) bp') p')
+                                                                     else Nothing
+                  _                                -> Nothing
 
 {- ---------- Logic Laws ---------- -}
 -- the standard logic laws for predicate logic

@@ -53,6 +53,8 @@ test10 = fromRight (error "Step failed") $ liftResult "R5" "R3" "A3" test9
 test11 = fromRight (error "Step failed") $ liftResult "R6" "R5" "A1" test10
 test12 = fromRight (error "Step failed") $ createSchema "S1" "R6" test11
 
+-- TODO: need to test rename functions and modus ponens under FA
+
 -- start the proof
 egProof = startProof (standardAxioms ++ setAxioms)
 

@@ -292,9 +292,10 @@ getPatterns = getPatternsP'
 
           join' (ps,es,ns) (qs,fs,ms) = (nub (ps++qs), nub (es++fs), nub (ns++ms))
 
-renameFreeVariable :: String -> String -> Predicate -> Predicate
+renameFreeVariable :: String -> String -> Predicate -> Maybe Predicate
 -- would be easier if Predicate was a functor
-renameFreeVariable xn yn p = renameP' p
+-- renameFreeVariable xn yn p renames xn to yn in p p.v. yn does not occur in p
+renameFreeVariable xn yn p = if yn `elem` getVariableNames p then Nothing else Just (renameP' p)
     where renameP' (PExp e)         = PExp (renameE' e)
           renameP' (PExpT e t)      = PExpT (renameE' e) t
           renameP' (PBinary op p q) = PBinary op (renameP' p) (renameP' q)
@@ -317,11 +318,13 @@ renameFreeVariable xn yn p = renameP' p
           captured' (Exists (PVar n) _) = n == xn
           captured' _                   = False
 
+{-
 renameBoundVariable :: String -> String -> Predicate -> Predicate
 renameBoundVariable xn yn p@(PBinding (Forall (PVar n) q) r) | n == xn   = PBinding (Forall (PVar n) (renameFreeVariable xn yn q)) (renameFreeVariable xn yn r)
                                                              | otherwise = p
 renameBoundVariable xn yn p@(PBinding (Exists (PVar n) q) r) | n == xn   = PBinding (Exists (PVar n) (renameFreeVariable xn yn q)) (renameFreeVariable xn yn r)
                                                              | otherwise = p
+-}
 
 varToPatterns :: Predicate -> Predicate
 varToPatterns = vtpP'

@@ -62,8 +62,8 @@ use a font that supports math symbols
 --           more general modusPonens given P -> Q and P1,...,Pn DONE
 --              check whether P1,...,Pn show that P is true
 --           modusPonens under the forall forall x s.t. P(x). Q(x) -> R(x)
---               and P(y) & Q(y), deduce R(y)
---           renaming variables Partially done
+--               and P(y) & Q(y), deduce R(y), need to specify a name matching x = y
+--           renaming variables DONE
 --           create schema, given P return P with variables converted to patterns DONE
 -}
 
@@ -195,6 +195,91 @@ instantiateSchema n sn pmat prf = do -- get schema
     where getVarN' (PVar n) = [n]
           getVarN' _        = []
 
+
+modusPonensUnderFA :: String -> [String] -> String -> String -> Proof -> Either String Proof
+modusPonensUnderFA n pns pimpqn varn prf = do -- get predicate P
+                                              ps <- fromMaybe (sequence $ map (\pn -> getPredicateM pn (proofGraph prf)) pns)
+                                                              "Error(modusPonensUnderFA): unable to find predicates"
+                                              -- get predicate P -> Q/P <-> Q
+                                              pimpq <- fromMaybe (getPredicateM pimpqn (proofGraph prf))
+                                                                 "Error(modusPonensUnderFA): unable to find predicate P->Q"
+                                              -- check P->Q predicate has the correct form
+                                              failOn (not (isFAImp pimpq || isFAIff pimpq))
+                                                     "Error(modusPonensUnderFA): P -> Q is not an implication or equivalence"
+                                              -- split into imp and iff cases
+                                              if isFAImp pimpq then modusPonensUnderFAImp n (pimpqn:pns) False ps pimpq varn prf
+                                                               else modusPonensUnderFAIff n (pimpqn:pns) ps pimpq varn prf
+    where isFAImp (PBinding (Forall _ _) (PBinary PImp _ _)) = True
+          isFAImp _                                          = False
+
+          isFAIff (PBinding (Forall _ _) (PBinary PIff _ _)) = True
+          isFAIff _                                          = False
+
+modusPonensUnderFAIff :: String -> [String] -> [Predicate] -> Predicate -> String -> Proof -> Either String Proof
+modusPonensUnderFAIff n sns ps piffq varn prf =
+        modusPonensUnderFAImp n sns True ps (pimpq piffq) varn prf `eplus` modusPonensUnderFAImp n sns True ps (qimpp piffq) varn prf
+                                                                   `eplus` (Left "Error(modusPonenUnderFAIff): unable to apply in either direction")
+    where pimpq (PBinding pb (PBinary PIff p q)) = (PBinding pb (PBinary PImp p q))
+          qimpp (PBinding pb (PBinary PIff p q)) = (PBinding pb (PBinary PImp q p))
+
+          eplus e@(Left _)  f = f
+          eplus e@(Right _) f = e
+
+modusPonensUnderFAImp :: String -> [String] -> Bool -> [Predicate] -> Predicate -> String -> Proof -> Either String Proof
+-- we assume there are no patterns in the predicates so we can just check for equality
+modusPonensUnderFAImp n sns isIff ps pimpq varn prf = do -- match pimpq to forall x s.t. R(x). P(x) -> Q(x)
+                                                         imp <- fromMaybe (bindToForm impForm pimpq)
+                                                                          "Error(modusPonensUnderFAImp): unable to bind to forall x s.t. R(x). P(x) -> Q(x)"
+                                                         -- get such that predicate from matching
+                                                         r <- fromMaybe (getPMatch "R" imp)
+                                                                        "Error(modusPonensUnderFAImp): unable to extract R from forall x s.t. R(x). P(x) -> Q(x)"
+                                                         -- get P from matching
+                                                         p <- fromMaybe (getPMatch "P" imp)
+                                                                        "Error(modusPonensUnderFAImp): unable to extract P from forall x s.t. R(x). P(x) -> Q(x)"
+                                                         -- get x from matching
+                                                         xPN <- fromMaybe (getNMatch "x" imp)
+                                                                          "Error(modusPonensUnderFAImp): unable to extract x from forall x s.t. R(x). P(x) -> Q(x)"
+                                                         xn <- fromMaybe (case xPN of { PVar n -> Just n; _ -> Nothing })
+                                                                         "Error(modusPonensUnderFAImp): invalid form of x in forall x s.t. R(x). P(x) -> Q(x)"
+                                                         -- what are we required to satisfy
+                                                         let req = if r == PEmpty then p else r `andP` p
+                                                         -- rename to new variable
+                                                         rsub <- fromMaybe (renameFreeVariable xn varn req)
+                                                                           "Error(modusPonensUnderFAImp): variable name already used in forall x s.t. R(x). P(x) -> Q(x)"
+                                                         -- can we use ps to satisfy rsub?
+                                                         failOn (not $ satisfy ps rsub)
+                                                                "Error(modusPonensUnderFAImp): unable to satisfy R(x) & P(x) from forall x s.t. R(x). P(x) -> Q(x)"
+                                                         -- get Q from matching
+                                                         q <- fromMaybe (getPMatch "Q" imp)
+                                                                        "Error(modusPonensUnderFAImp): unable to extract Q(x) from forall x s.t. R(x). P(x) -> Q(x)"
+                                                         -- rename to new variable
+                                                         qsub <- fromMaybe (renameFreeVariable xn varn q)
+                                                                           "Error(modusPonensUnderFAImp): variable name already used in forall x s.t. R(x). P(x) -> Q(x)"
+                                                         -- get deduction type
+                                                         let dt = ModusPonens (if isIff then DDIff else DDImp)
+                                                         -- add the result to the proof graph
+                                                         pg <- addResult (n,qsub) sns dt (proofGraph prf)
+                                                         -- return the proof
+                                                         return $ prf { proofGraph = pg }
+    where impForm = forall (patternN "x") (patternP "R") (patternP "P" `impP` patternP "Q")
+
+          satisfy :: [Predicate] -> Predicate -> Bool
+          satisfy ps p | p `elem` ps = True
+                       | otherwise   = case p of
+                                         PBinary op x y -> let bx = satisfy ps x
+                                                               by = satisfy ps y
+                                                           in evalBOp op bx by
+                                         PUnary op x    -> let bx = satisfy ps x
+                                                           in evalUOp op bx
+                                         _              -> False
+
+          evalBOp PAnd x y = x && y
+          evalBOp POr  x y = x || y
+          evalBOp PXOr x y = (x && not y) || (not x && y)
+          evalBOp PImp x y = not x || y
+          evalBOp PIff x y = x == y
+
+          evalUOp PNot x = not x
 
 modusPonens :: String -> String -> String -> Proof -> Either String Proof
 -- modusPonens (pns,prf) pn pimpqn tries to apply modus ponens
@@ -354,13 +439,16 @@ genInstantiation n fan vn fa prf = do -- bind predicate to forall form
                                       -- get variable matching
                                       xN <- fromMaybe (getNMatch "x" faM)
                                                       "Error(genInstantiation): unable to extract x from forall x s.t. P. Q"
+                                      x <- fromMaybe (case xN of { (PVar n) -> Just n; _ -> Nothing })
+                                                     "Error(genInstantiation): error getting bound form of variable"
                                       -- get new predicate
                                       inst <- fromMaybe (if isEmptyP pP
                                                          then apMatchingM faM simpForm
                                                          else apMatchingM faM instForm)
                                                          "Error(genInstantiation): unable to apply matching"
                                       -- rename variables to desired name
-                                      let instY = renameFreeVariables (\pn -> if pn==xN then (varN vn) else pn) inst
+                                      instY <- fromMaybe (renameFreeVariable x vn inst)
+                                                         "Error(genInstantiation): variable name already in use in predicate"
                                       -- get the new proof graph
                                       pg <- addResult (n,instY) [fan] UniversalInstantiation (proofGraph prf)
                                       -- return the new proof
@@ -457,12 +545,17 @@ transformFocus eqn prf = do -- get predicate
                             return $ prf { proofFocus = Just $ f { focus = npc
                                                                  , focusHistory = fh }}
 
-{-
+
 renameBoundVariableInFocus :: String -> String -> Proof -> Either String Proof
 renameBoundVariableInFocus xn yn prf = do f <- fromMaybe (proofFocus prf)
-                                          "Error(transformFocus): no focus"
-                                          undefined -- TODO: need to add equivalent function in PredicateCursors
--}
+                                               "Error(renameBoundVariableInFocus): no focus"
+                                          -- try to rename variables at the cut
+                                          npc <- fromMaybe (renameBoundVariableAtCut xn yn (focus f))
+                                                           "Error(renameBoundVariableInFocus): unable to rename variable"
+                                          -- update focus
+                                          let nf = f { focus = npc }
+                                          -- update proof
+                                          return $ prf { proofFocus = Just nf }
 
 recordFocus :: String -> Proof -> Either String Proof
 -- TODO: need to record the name of the result used in the focus
@@ -483,7 +576,8 @@ renameFreeVariableInResult n pn xn yn prf = do -- get predicate to rename
                                                p <- fromMaybe (getPredicateM pn (proofGraph prf))
                                                               "Error(renameFreeVariableInResult): unable to find predicate"
                                                -- rename the variable
-                                               let p' = renameFreeVariable xn yn p
+                                               p' <- fromMaybe (renameFreeVariable xn yn p)
+                                                               "Error(renameFreeVariableInResult): new variable name already used in predicate"
                                                -- check we have actually renamed something
                                                failOn (p == p')
                                                       "Error(renameFreeVariableInResult): no variable renamed"
