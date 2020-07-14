@@ -41,6 +41,29 @@ Our implementation of sets should (be some subset of?) ZFC. Just use a subset of
 
 -}
 
+-- TODO: remove types
+--       add indexed variables
+--       implement the below
+--       simplify predicate binding as described below
+{-
+data PName = PSimpleVar String
+           | PIndexedVar String Expression
+           | PConstant Special
+           | NPatVar String
+           | NCut
+
+data Special = SInt Integer
+             | SBool Bool
+             | SZ
+             | SZplus
+             | SZn Expression
+             | SFinite Expression
+
+data Expression = ExpN PName
+                | ExpFn PName [Expression]
+                | ExpPatVar String
+                | ExpCut
+-}
 
 {- ---------- Data types ---------- -}
 
@@ -56,11 +79,15 @@ data Type = AbstractSetT -- for abstract sets
 -- string is a unique identifier, and the second is how to display it
 data PName = PVar String     -- variables x, A, etc
            | PConst String   -- constants 1, Z, True etc
-           | PInt Integer
+           | PInt Integer    -- special constants
            | PTrue
            | PFalse
            | NPatVar String  -- for matching
     deriving (Eq)
+
+--         | PIndexedVar String Expression
+-- need a way to re-index e.g. x_[0..n-1] -> x_[1..n]
+-- I don't think we need types
 
 -- an expression is either a type expression (x :: Integer) or a function expression (x + y)
 data Expression = ExpN PName
@@ -72,6 +99,10 @@ data Expression = ExpN PName
 -- binding a variable in a predicate
 -- forall x s.t. P(x). Q(x) 
 -- note: name must be a PVar
+-- TODO: should we change to Forall PName, Exists PName
+-- then forall x s.t. P(x). Q(x) is just forall x. P(x) -> Q(x)
+-- then we could inline this definition
+-- the such that form, could just be an alternate way of displaying it
 data PredicateBinding = Forall PName Predicate | Exists PName Predicate
     deriving (Eq)
 
@@ -81,6 +112,11 @@ data PBOp = PAnd | POr | PXOr | PImp | PIff
 data PUOp = PNot
     deriving (Eq)
 
+-- TODO: predicates are really expressions of type Bool
+-- so maybe it would be better not to have a separate predicate type
+-- OR, remove PExp and PExpT from the data type
+--     instead we could have PFunction PFn [Expression]
+-- NOTE: we have hard coded a limited set of predicate functions (should be fine for the moment)
 data Predicate = PEmpty
                | PExp Expression
                | PExpT Expression Type

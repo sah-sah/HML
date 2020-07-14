@@ -48,10 +48,6 @@ test6 = fromRight (error "Step failed") $ assume ("A3",(p `orP` q) `impP` r) tes
 test7 = fromRight (error "Step failed") $ modusPonensGen "R3" ["A1"] "A3" test6
 test8 = fromRight (error "Step failed") $ assume ("A4",p) test7
     where p = expP $ namedExp $ varN "x"
-test9 = fromRight (error "Step failed") $ renameFreeVariableInResult "R4" "A4" "x" "y" test8
-test10 = fromRight (error "Step failed") $ liftResult "R5" "R3" "A3" test9
-test11 = fromRight (error "Step failed") $ liftResult "R6" "R5" "A1" test10
-test12 = fromRight (error "Step failed") $ createSchema "S1" "R6" test11
 
 -- TODO: need to test rename functions and modus ponens under FA
 
@@ -82,6 +78,16 @@ egProof3 = fromRight (error "Step failed") $ instantiateSchema "R1" "subsetAxiom
 
 
 egProof4 = fromRight (error "Step failed") $ modusPonens "R2" "A1" "R1" egProof3
+
+egProof5a = fromRight (error "Step failed") $ focusOn "R2" egProof4
+egProof6a = fromRight (error "Step failed") $ renameBoundVariableInFocus "x" "y" egProof5a
+egProof7a = fromRight (error "Step failed") $ assume ("A2",asp) egProof6a
+    where asp = expP $ inSet (namedExp $ varN "y") (setA `union` setB)
+
+          setA = namedExp $ varN "A"
+          setB = namedExp $ varN "B"
+egProof8a = fromRight (error "Step failed") $ modusPonensUnderFA "R3" ["A2"] "R2" "y" egProof7a
+
 
 egProof5 = fromRight (error "Step failed") $ instantiateSchema "R3" "unionAxiom" pm egProof4
     where pm = createMatching [] [("A",setA),("B",setB)] [("x",varN "x")]

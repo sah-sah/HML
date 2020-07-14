@@ -65,6 +65,17 @@ data ProofGraph = ProofGraph { proofGraph :: Gr ProofNode ()
                              , nextNode :: Int }
     deriving (Show)
 
+{-
+ - data ProofGraph = ProofGraph { graph :: Gr ProofNode ()
+ -                              , schemaList :: [AxiomSchema]
+ -
+ - data AxiomSchema = AxiomSchema { schemaName :: String
+ -                                , schemaGroup :: String -- for namespacing
+ -                                , schemaDescription :: String -- how to use the schema
+ -                                , axiomSchema :: PredicateSchema Predicate | FunctionSchema Function etc
+ -
+ -}
+
 -- a node is either the root node with the axioms, or a result of a proof step
 -- an assumption type, which has deductions = []
 data ProofNode = Axiom Result

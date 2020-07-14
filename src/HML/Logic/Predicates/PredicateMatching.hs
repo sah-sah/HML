@@ -165,28 +165,6 @@ apMatchingM pm p = apP' p
           apPN' (NPatVar s) = getNMatch s pm
           apPN' pn          = Just pn
 
-renameFreeVariables :: (PName -> PName) -> Predicate -> Predicate
---renameFreeVariables rnf p renames the free variables in p using
---the function rnf, i.e. applies rnf to each free variable in p
---Assumes that the renaming doesn't capture any variables
-renameFreeVariables rnf p = rfvP' [] p
-    where rfvP' :: [PName] -> Predicate -> Predicate
-          rfvP' bv (PExp e)         = PExp (rfvE' bv e)
-          rfvP' bv (PExpT e t)      = (PExpT (rfvE' bv e) t)
-          rfvP' bv (PBinary op p q) = PBinary op (rfvP' bv p) (rfvP' bv q)
-          rfvP' bv (PUnary op p)    = PUnary op (rfvP' bv p)
-          rfvP' bv (PBinding pb p)  = let bv' = (boundVariable pb):bv in PBinding (rfvPB' bv' pb) (rfvP' bv' p)
-          rfvP' bv p                = p
-
-          rfvE' :: [PName] -> Expression -> Expression
-          rfvE' bv (ExpN pn)      = if pn `elem` bv then ExpN pn else ExpN (rnf pn)
-          rfvE' bv (ExpF n es)    = ExpF n (map (rfvE' bv) es)
-          rfvE' bv e              = e 
-
-          rfvPB' :: [PName] -> PredicateBinding -> PredicateBinding
-          rfvPB' bv (Forall pn p) = Forall pn (rfvP' bv p)
-          rfvPB' bv (Exists pn p) = Exists pn (rfvP' bv p)
-
 {- Examples -}
 
 egP1 = expP $ (setA `union` setB) `subset` setB

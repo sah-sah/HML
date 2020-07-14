@@ -570,7 +570,9 @@ recordFocus n prf = do -- get the focus
                        -- return the new proof graph
                        return $ prf { proofGraph = pg }
 
-
+{-
+-- this is invalid if the variable name is used in any other result, so don't allow it
+-- but we can rename a bound variable, because a bound variable overrides a free variable
 renameFreeVariableInResult :: String -> String -> String -> String -> Proof -> Either String Proof
 renameFreeVariableInResult n pn xn yn prf = do -- get predicate to rename
                                                p <- fromMaybe (getPredicateM pn (proofGraph prf))
@@ -585,6 +587,7 @@ renameFreeVariableInResult n pn xn yn prf = do -- get predicate to rename
                                                pg <- addResult (n,p') [pn] RenameFreeVariable (proofGraph prf)
                                                -- return the new proof
                                                return $ prf { proofGraph = pg }
+-}
 
 generaliseWith :: String -> String -> String -> Proof -> Either String Proof
 generaliseWith n pn vn prf = do -- get predicate to generalise
