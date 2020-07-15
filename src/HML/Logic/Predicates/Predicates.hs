@@ -1,6 +1,5 @@
 {--
  -- Predicates.hs
- -- :l ./HML/Logic/PredicateLogic/Predicates.hs from devel directory
  -- A module for predicate logic
  --
  -- Gives basic data types for predicate logic, show instances, construction functions
@@ -8,8 +7,8 @@
  --}
 module HML.Logic.Predicates.Predicates where
 
-import Data.List
-import Control.Monad
+import Data.List(nub)
+--import Control.Monad
 
 {-
 Use Hilbert style deductive system, with few inference rules and (infinitely) many axioms
@@ -27,17 +26,6 @@ Modus ponens:: P(x) -> Q(x), P(x) allows us to conclude Q(x) - we can generalise
    forall x. P(x) -> Q(x), P(y) gives Q(y) (this is a combination of the previous steps)
 
 It will be convenient to have other rules of inference, which follow from those above
-
-We need a new proof calculus. let T be set of axioms. Then T :: A means A is true given T
-
-In propositional logic we joined axioms using and then manipulated to get desired statement
-This approach is too restrictive (and impractical) for predicate logic, we will need to 
-maintain a collection of True statements A1,...,An. The axioms will be implied. Then we combine
-axioms and previous statements to get An+1 etc. We can do subproofs, where we temporarily add
-A to the axioms, then any statements B we derive, can be replaced with A -> B1, ..., A -> Bn etc
-
-Our implementation of sets should (be some subset of?) ZFC. Just use a subset of sets available in ZFC.
-
 
 -}
 
@@ -59,275 +47,168 @@ data Special = SInt Integer
              | SZn Expression
              | SFinite Expression
 
+-- explicit equals function which we will use in the deduction laws
+-- if x=y, then we can substitute y for each occurence of x in P
 data Expression = ExpN PName
                 | ExpFn PName [Expression]
+                | ExpEquals Expression Expression
                 | ExpPatVar String
                 | ExpCut
 -}
 
 {- ---------- Data types ---------- -}
 
--- variables, constants, and functions can have multiple types 
-data Type = AbstractSetT -- for abstract sets
-          | PredicateT   -- essentially a boolean
-          | EmptyT       -- no type information
-    deriving (Eq)
+-- variables
+data Variable = SimpleVar String
+              | IndexedVar String Expression
+              | VPatVar String
+              | VCut
+    deriving (Show, Eq)
 
--- the types of variables are given as predicates (i.e. A :: AbstractSetT is a predicate
--- which we use for matching, e.g., from x :: Integer and y=x^2 we can derive y :: Integer)
--- This datatype will need to be expanded, e.g. to (String,String) where the first
--- string is a unique identifier, and the second is how to display it
-data PName = PVar String     -- variables x, A, etc
-           | PConst String   -- constants 1, Z, True etc
-           | PInt Integer    -- special constants
-           | PTrue
-           | PFalse
-           | NPatVar String  -- for matching
-    deriving (Eq)
+-- Names of variables and constants etc
+data Name = Var Variable
+          | Constant Special
+    deriving (Show, Eq)
 
---         | PIndexedVar String Expression
--- need a way to re-index e.g. x_[0..n-1] -> x_[1..n]
--- I don't think we need types
+-- Names of special mathematical objects
+data Special = SInt Integer
+             | SBool Bool
+             | SZ
+             | SZplus
+             | SZn Expression -- {0,...,n-1} where n is given by an expression
+             | SFinite Expression -- {1,...,n} where n is given by an expression
+    deriving (Show, Eq)
 
--- an expression is either a type expression (x :: Integer) or a function expression (x + y)
-data Expression = ExpN PName
-                | ExpF String [Expression]
+-- general mathematical expressions, with equals a special case
+data Expression = ExpN Name
+                | ExpFn String [Expression]
+                | ExpEquals Expression Expression
                 | ExpPatVar String
                 | ExpCut
-    deriving (Eq)
+    deriving (Show, Eq)
 
--- binding a variable in a predicate
--- forall x s.t. P(x). Q(x) 
--- note: name must be a PVar
--- TODO: should we change to Forall PName, Exists PName
--- then forall x s.t. P(x). Q(x) is just forall x. P(x) -> Q(x)
--- then we could inline this definition
--- the such that form, could just be an alternate way of displaying it
-data PredicateBinding = Forall PName Predicate | Exists PName Predicate
-    deriving (Eq)
-
-data PBOp = PAnd | POr | PXOr | PImp | PIff
-    deriving (Eq)
-
-data PUOp = PNot
-    deriving (Eq)
-
--- TODO: predicates are really expressions of type Bool
--- so maybe it would be better not to have a separate predicate type
--- OR, remove PExp and PExpT from the data type
---     instead we could have PFunction PFn [Expression]
--- NOTE: we have hard coded a limited set of predicate functions (should be fine for the moment)
-data Predicate = PEmpty
-               | PExp Expression
-               | PExpT Expression Type
-               | PBinary PBOp Predicate Predicate
-               | PUnary PUOp Predicate 
-               | PBinding PredicateBinding Predicate
+-- predicates which are expressions of type Bool
+data Predicate = PExp Expression -- general form (the expression here should have type Bool)
+               | PAnd Predicate Predicate
+               | POr Predicate Predicate
+               | PImp Predicate Predicate
+               | PIff Predicate Predicate
+               | PNot Predicate
+               | PBinding BindingType Variable Predicate
                | PPatVar String -- for forming logic laws
                | PCut
-    deriving (Eq)
+    deriving (Show, Eq)
 
-{- ---------- Show instances ---------- -}
-
--- TODO: for pretty printing we need a context with
--- information about the functions and how to print them
-
-bracket :: Bool -> String -> String
-bracket b str = if b then "(" ++ str ++ ")" else str
-
---TODO: rewrite the show instances to remove unnecessary brackets
--- but bracket everything without regard to precedence
-
--- use unicode to get nice characters
-instance Show Type where
-    show AbstractSetT = "Set"
-    show PredicateT   = "P()"
-    show EmptyT       = "()"
-
-instance Show PName where
-    show (PVar n)    = n
-    show (PConst n)  = n
-    show (PInt n)    = show n
-    show (PTrue)     = "T"
-    show (PFalse)    = "F"
-    show (NPatVar n) = concat ["N{",n,"}"]
-
-instance Show Expression where
-    show (ExpN pn)     = show pn
-    show (ExpF n es)   = intercalate " " (n:map bshow' es)
-        where bshow' e = bracket (isCompoundExp e) (show e)
-    show (ExpPatVar n) = concat ["E{",n,"}"] -- pattern variables are in curly brackets
-    show (ExpCut)      = "(@)" -- must be in brackets
-
-instance Show PredicateBinding where
-    show (Forall v p) = "forall " ++ show v ++ (if p==PEmpty then [] else " s.t. " ++ show p) ++ "."
-    show (Exists v p) = "exists " ++ show v ++ (if p==PEmpty then [] else " s.t. " ++ show p) ++ "."
-
-instance Show PBOp where
-    show PAnd = "&"
-    show POr  = "|"
-    show PXOr = "x|"
-    show PImp = "->"
-    show PIff = "<->"
-
-instance Show PUOp where
-    show PNot = "~"
-
-instance Show Predicate where
-    show (PEmpty)         = "()"
-    show (PExp e)         = show e
-    show (PExpT e t)      = intercalate " " [show e,"::",show t]
-    show (PBinary op p q) = intercalate " " [bracket (isCompoundP p) (show p)
-                                            ,show op
-                                            ,bracket (isCompoundP q) (show q)]
-    show (PUnary op p)    = intercalate " " [show op,bracket (isCompoundP p) (show p)]
-    show (PBinding pb p)  = intercalate " " [show pb,show p]
-    show (PPatVar n)      = concat ["P{",n,"}"] -- pattern variables in curly brackets
-    show (PCut)           = "(@)" -- must be in brackets
+-- exists or forall
+data BindingType = Forall | Exists
+    deriving (Show, Eq)
 
 {- ---------- Construction Functions ---------- -}
 
--- named objects (variables and constants)
-varN, constN, patternN :: String -> PName
-varN = PVar
-constN = PConst
-patternN = NPatVar
 
-intN :: Integer -> PName
-intN = PInt
+{-
+forall, exists :: Variable -> Predicate -> Predicate
+forall = PBinding Forall
+exists = PBinding Exists
+-}
 
-trueN, falseN :: PName
-trueN = PTrue
-falseN = PFalse
+{- ---------- Querying Predicates ---------- -}
 
-hasPatternPN :: PName -> Bool
-hasPatternPN (NPatVar _) = True
-hasPatternPN _           = False
-
--- expressions
-namedExp :: PName -> Expression
-namedExp = ExpN
-
-fnExp :: String -> [Expression] -> Expression
-fnExp = ExpF
-
-patternExp :: String -> Expression
-patternExp = ExpPatVar
-
-hasPatternExp :: Expression -> Bool
-hasPatternExp (ExpN pn)     = hasPatternPN pn
-hasPatternExp (ExpF _ es)   = any hasPatternExp es
-hasPatternExp (ExpPatVar _) = True
-hasPatternExp _             = False
-
--- predicates
-emptyP :: Predicate
-emptyP = PEmpty
-
-isEmptyP :: Predicate -> Bool
-isEmptyP (PEmpty) = True
-isEmptyP _        = False
-
-trueP, falseP :: Predicate
--- TODO: maybe these should be special values
-trueP = expP $ namedExp trueN
-falseP =  expP $ namedExp falseN
-
-expP :: Expression -> Predicate
-expP = PExp
-
-typedExpP :: Expression -> Type -> Predicate
-typedExpP = PExpT
-
-andP, orP, xorP, impP, iffP :: Predicate -> Predicate -> Predicate
-andP = PBinary PAnd
-orP  = PBinary POr
-xorP = PBinary PXOr
-impP = PBinary PImp
-iffP = PBinary PIff
-
-notP :: Predicate -> Predicate
-notP = PUnary PNot
-
-patternP :: String -> Predicate
-patternP = PPatVar
-
-hasPatternP :: Predicate -> Bool
-hasPatternP (PExp e)        = hasPatternExp e
-hasPatternP (PExpT e t)     = hasPatternExp e
-hasPatternP (PBinary _ p q) = hasPatternP p || hasPatternP q
-hasPatternP (PUnary _ p)    = hasPatternP p
-hasPatternP (PBinding pb p) = hasPatternPB pb || hasPatternP p
-hasPatternP (PPatVar _)     = True
-hasPatternP _               = False
-
-forall, exists :: PName -> Predicate -> Predicate -> Predicate
-forall n stp p = PBinding (Forall n stp) p
-exists n stp p = PBinding (Exists n stp) p
-
-forall_, exists_ :: PName -> Predicate -> Predicate
-forall_ n p = PBinding (Forall n PEmpty) p
-exists_ n p = PBinding (Exists n PEmpty) p
-
-isBound :: PName -> Predicate -> Bool
---isBound pn p returns true if pn is bound in p
-isBound pn (PBinary _ p q) = isBound pn p || isBound pn q
-isBound pn (PUnary _ p)    = isBound pn p
-isBound pn (PBinding pb p) = (boundVariable pb == pn) || isBound pn p
-isBound pn _               = False
-
-boundVariable :: PredicateBinding -> PName
-boundVariable (Forall v _) = v
-boundVariable (Exists v _) = v
-
-hasPatternPB :: PredicateBinding -> Bool
-hasPatternPB (Forall n p) = hasPatternPN n || hasPatternP p
-hasPatternPB (Exists n p) = hasPatternPN n || hasPatternP p
-
-getVariableNames :: Predicate -> [String]
---getVariables p returns the names of variables in p
---(whether the variables are bound or not)
-getVariableNames = getVNamesP' 
-    where getVNamesP' (PExp e)        = getVNamesE' e
-          getVNamesP' (PExpT e _)     = getVNamesE' e
-          getVNamesP' (PBinary _ p q) = getVNamesP' p ++ getVNamesP' q
-          getVNamesP' (PUnary _ p)    = getVNamesP' p
-          getVNamesP' (PBinding pb p) = getVNamesPB' pb ++ getVNamesP' p
-          getVNamesP' _               = []
-
-          getVNamesE' (ExpN pn)   = getVNamesPN' pn
-          getVNamesE' (ExpF _ es) = concatMap getVNamesE' es
-          getVNamesE' _           = []
-
-          getVNamesPB' (Forall pn p) = getVNamesPN' pn ++ getVNamesP' p
-          getVNamesPB' (Exists pn p) = getVNamesPN' pn ++ getVNamesP' p
-
-          getVNamesPN' (PVar n) = [n]
-          getVNamesPN' _        = []
-
-getPatterns :: Predicate -> ([Predicate],[Expression],[PName])
+getPatterns :: Predicate -> ([Predicate],[Expression],[Variable])
 getPatterns = getPatternsP'
-    where getPatternsP' (PExp e)        = getPatternsE' e
-          getPatternsP' (PExpT e _)     = getPatternsE' e
-          getPatternsP' (PBinary _ p q) = (getPatternsP' p) `join'` (getPatternsP' q)
-          getPatternsP' (PUnary _ p)    = getPatternsP' p
-          getPatternsP' (PBinding pb p) = (getPatternsPB' pb) `join'` (getPatterns p)
-          getPatternsP' (PPatVar n)     = ([PPatVar n],[],[])
-          getPatternsP' _               = ([],[],[])
+    where getPatternsP' (PExp e)         = getPatternsE' e
+          getPatternsP' (PAnd p q)       = (getPatternsP' p) `join` (getPatternsP' q)
+          getPatternsP' (POr p q)        = (getPatternsP' p) `join` (getPatternsP' q)
+          getPatternsP' (PImp p q)       = (getPatternsP' p) `join` (getPatternsP' q)
+          getPatternsP' (PIff p q)       = (getPatternsP' p) `join` (getPatternsP' q)
+          getPatternsP' (PNot p)         = getPatternsP' p
+          getPatternsP' (PBinding t v p) = (getPatternsV' v) `join` (getPatternsP' p)
+          getPatternsP' (PPatVar n)      = ([PPatVar n],[],[])
+          getPatternsP' _                = ([],[],[])
 
-          getPatternsE' (ExpN pn)     = getPatternsPN' pn
-          getPatternsE' (ExpF _ es)   = foldl join' ([],[],[]) (map getPatternsE' es)
-          getPatternsE' (ExpPatVar n) = ([],[ExpPatVar n],[])
-          getPatternsE' _             = ([],[],[])
+          getPatternsE' (ExpN n)        = getPatternsN' n
+          getPatternsE' (ExpFn _ es)    = foldl join ([],[],[]) (map getPatternsE' es)
+          getPatternsE' (ExpEquals e f) = (getPatternsE' e) `join` (getPatternsE' f)
+          getPatternsE' (ExpPatVar n)   = ([],[ExpPatVar n],[])
+          getPatternsE' _               = ([],[],[])
 
-          getPatternsPB' (Forall pn p) = (getPatternsPN' pn) `join'` (getPatternsP' p)
-          getPatternsPB' (Exists pn p) = (getPatternsPN' pn) `join'` (getPatternsP' p)
+          getPatternsN' (Var v)      = getPatternsV' v
+          getPatternsN' (Constant s) = getPatternsS' s
 
-          getPatternsPN' (NPatVar n) = ([],[],[NPatVar n])
-          getPatternsPN' _           = ([],[],[])
+          getPatternsV' (IndexedVar n e) = getPatternsE' e
+          getPatternsV' (VPatVar n)      = ([],[],[VPatVar n])
+          getPatternsV' _                = ([],[],[])
 
-          join' (ps,es,ns) (qs,fs,ms) = (nub (ps++qs), nub (es++fs), nub (ns++ms))
+          getPatternsS' (SZn e)     = getPatternsE' e
+          getPatternsS' (SFinite e) = getPatternsE' e
+          getPatternsS' _           = ([],[],[])
 
+          join (ps,es,ns) (qs,fs,ms) = (nub (ps++qs), nub (es++fs), nub (ns++ms))
+
+getVariables :: Predicate -> [Variable]
+getVariables = nub . getVariablesP'
+    where getVariablesP' (PExp e)         = getVariablesE' e
+          getVariablesP' (PAnd p q)       = (getVariablesP' p) ++ (getVariablesP' q)
+          getVariablesP' (POr p q)        = (getVariablesP' p) ++ (getVariablesP' q)
+          getVariablesP' (PImp p q)       = (getVariablesP' p) ++ (getVariablesP' q)
+          getVariablesP' (PIff p q)       = (getVariablesP' p) ++ (getVariablesP' q)
+          getVariablesP' (PNot p)         = getVariablesP' p
+          getVariablesP' (PBinding t v p) = v:((getVariablesV' v) ++ (getVariablesP' p))
+          getVariablesP' _                = []
+          
+          getVariablesE' (ExpN n)        = getVariablesN' n
+          getVariablesE' (ExpFn _ es)    = concatMap getVariablesE' es
+          getVariablesE' (ExpEquals e f) = (getVariablesE' e) ++ (getVariablesE' f)
+          getVariablesE' _               = []
+          
+          getVariablesN' (Var v)      = v:(getVariablesV' v)
+          getVariablesN' (Constant s) = getVariablesS' s
+          
+          getVariablesV' (IndexedVar n e) = getVariablesE' e
+          getVariablesV' _                = []
+          
+          getVariablesS' (SZn e)     = getVariablesE' e
+          getVariablesS' (SFinite e) = getVariablesE' e
+          getVariablesS' _           = []
+
+-- isCompound? is for whether brackets are needed
+isCompoundV :: Variable -> Bool
+isCompoundV (SimpleVar _)    = False
+isCompoundV (IndexedVar _ _) = False
+isCompoundV (VPatVar _)      = False
+isCompoundV (VCut)           = False
+
+isCompoundN :: Name -> Bool
+isCompoundN (Var v)      = isCompoundV v
+isCompoundN (Constant s) = isCompoundS s
+
+isCompoundS :: Special -> Bool
+isCompoundS (SInt _)    = False
+isCompoundS (SBool _)   = False
+isCompoundS (SZ)        = False
+isCompoundS (SZplus)    = False
+isCompoundS (SZn _)     = False
+isCompoundS (SFinite _) = False
+
+isCompoundE :: Expression -> Bool
+isCompoundE (ExpN n)        = isCompoundN n
+isCompoundE (ExpFn _ _)     = True
+isCompoundE (ExpEquals _ _) = True
+isCompoundE (ExpPatVar _)   = False
+isCompoundE (ExpCut)        = False
+
+isCompoundP :: Predicate -> Bool
+isCompoundP (PExp e)         = isCompoundE e
+isCompoundP (PAnd _ _)       = True
+isCompoundP (POr _ _)        = True
+isCompoundP (PImp _ _)       = True
+isCompoundP (PIff _ _)       = True
+isCompoundP (PNot _)         = True
+isCompoundP (PBinding _ _ _) = True
+isCompoundP (PPatVar _)      = False
+isCompoundP (PCut)           = False
+
+{-
 renameFreeVariable :: String -> String -> Predicate -> Maybe Predicate
 -- would be easier if Predicate was a functor
 -- renameFreeVariable xn yn p renames xn to yn in p p.v. yn does not occur in p
@@ -384,76 +265,60 @@ varToPatterns = vtpP'
 
           vtpPN' (PVar n) = NPatVar n
           vtpPN' pn       = pn
-
-{- ---------- Building Set Expressions ----------- -}
-{- TODO: these should be in Axioms.Set -}
-emptySet :: Expression
-emptySet = namedExp $ constN "0"
-
-isASet :: PName -> Predicate
-isASet n = typedExpP (namedExp n) AbstractSetT
-
-intersection, union, subset, equalSet, symDiff, diff, cross :: Expression -> Expression -> Expression
-intersection a b = ExpF "setIntersection" [a,b]
-union a b = ExpF "setUnion" [a,b]
-subset a b = ExpF "setSubset" [a,b]
-equalSet a b = ExpF "setEqual" [a,b]
-symDiff a b = ExpF "setSymmetricDifference" [a,b]
-diff a b = ExpF "setDifference" [a,b]
-cross a b = ExpF "setCrossProduct" [a,b]
-
-complement :: Expression -> Expression 
-complement a = ExpF "setComplement" [a]
-
-inSet :: Expression -> Expression -> Expression
-inSet e se = ExpF "setElem" [e,se]
+-}
 
 
-isCompoundPN :: PName -> Bool
--- currently there are no compound PNames
-isCompoundPN _ = False
-
-isCompoundT :: Type -> Bool
-isCompoundT _ = False
-
-isCompoundExp :: Expression -> Bool
-isCompoundExp (ExpN pn)     = isCompoundPN pn
--- sometimes we need brackets, other times not 
-isCompoundExp (ExpF _ _)    = True
-isCompoundExp (ExpPatVar _) = False
-isCompoundExp (ExpCut)      = False
-
-isCompoundP :: Predicate -> Bool
-isCompoundP (PEmpty) = False
-isCompoundP (PExp e) = isCompoundExp e
-isCompoundP (PExpT e t) = True
-isCompoundP (PBinary op p q) = True
-isCompoundP (PUnary op p) = True
-isCompoundP (PBinding pb p) = True
-isCompoundP (PPatVar n) = False
-isCompoundP (PCut) = False
 
 {- ---------- Examples ---------- -}
 
--- definition of subset
-subsetDefn :: Predicate
--- note: we will need extra predicates to make this useful
--- e.g. setA is a Set, setB is a Set, 
--- then these imply that setA `subset` setB has type PredicateT (Bool)
--- A logic law will involve matching at least one, but maybe more, predicates
--- e.g. to use subsetDefn we need to match A is a Set, B is a Set, A subset B
-subsetDefn = iffP (expP $ (setA `subset` setB))
-                  (forall_ nameX ((expP $ inSet varX setA) `impP` (expP $ inSet varX setB)))
-    where setA = namedExp $ varN "A"
-          setB = namedExp $ varN "B"
+{-
+data Variable = SimpleVar String
+              | IndexedVar String Expression
+              | VPatVar String
+              | VCut
 
-          nameX = varN "x"
-          varX = namedExp nameX
+data Name = Var Variable
+          | Constant Special
+    deriving (Show, Eq)
 
-setEqDefn :: Predicate
-setEqDefn = iffP (expP $ (setA `equalSet` setB))
-                 (andP (expP $ (setA `subset` setB))
-                       (expP $ (setB `subset` setA)))
-    where setA = namedExp $ varN "A"
-          setB = namedExp $ varN "B"
+-- Names of special mathematical objects
+data Special = SInt Integer
+             | SBool Bool
+             | SZ
+             | SZplus
+             | SZn Expression -- {0,...,n-1} where n is given by an expression
+             | SFinite Expression
+-}
+
+-- variables
+xVar, yVar :: Name
+xVar = Var $ SimpleVar "x"
+yVar = Var $ SimpleVar "y"
+iVar = Var $ SimpleVar "i"
+jVar = Var $ SimpleVar "j"
+xiVar = Var (IndexedVar "x" (ExpN iVar))
+xjVar = Var (IndexedVar "x" (ExpN jVar))
+xnVar n = Var (IndexedVar "x" (ExpN (intn n)))
+xnsVar n = Var (IndexedVar "x" (ExpN $ firstN n))
+-- special constants
+int1 = Constant (SInt 1)
+intn n = Constant (SInt n)
+true = Constant (SBool True)
+false = Constant (SBool False)
+ints = Constant (SZ)
+posInts = Constant (SZplus)
+firstN n = Constant (SFinite (ExpN $ intn n))
+-- expressions
+lt = ExpFn "numLT" [ExpN $ intn 2, ExpN $ intn 3]
+eqxy = ExpEquals (ExpN xVar) (ExpN yVar)
+-- predicates
+andP = PAnd (PExp lt) (PExp eqxy)
+distinct = PBinding Forall i (PBinding Forall j (PImp (PExp xieqxj) (PExp ieqj)))
+    where i = SimpleVar "i"
+          j = SimpleVar "j"
+          xi = IndexedVar "x" (ExpN $ Var i)
+          xj = IndexedVar "x" (ExpN $ Var j)
+
+          ieqj = ExpEquals (ExpN $ Var i) (ExpN $ Var j)
+          xieqxj = ExpEquals (ExpN $ Var xi) (ExpN $ Var xj)
 

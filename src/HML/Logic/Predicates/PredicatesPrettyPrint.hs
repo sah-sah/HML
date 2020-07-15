@@ -19,26 +19,143 @@ import HML.Logic.Predicates.Predicates
 import HML.Logic.Predicates.PredicateCursors
 
 -- can add extra printing functions as needed, e.g. printPName
-data PrintContext = PCon { printFunction :: String -> [String] -> Maybe String
+-- how to print, also precedence for using functions in expressions
+
+data Fixty = Prefix | Infix | Nofix
+    deriving (Show, Eq)
+
+type PrintInfo = (String,(Fixty,Int,String))
+
+data PrintContext = PCon { printFunction :: [PrintInfo]
                          }
 
+-- TODO: fix up the printing contexts
+-- change function to association lists and use lookup
+
 noContext :: PrintContext
-noContext = PCon { printFunction = \_ _ -> Nothing
+noContext = PCon { printFunction = []
                  }
 
-printSetFn :: String -> [String] -> Maybe String
-printSetFn n args | n == "setSubset" && length args == 2 = Just (intercalate " " [args!!0,"\\subset",args!!1])
-                  | n == "setElem"   && length args == 2 = Just (intercalate " " [args!!0,"\\in",args!!1])
-                  | n == "setEqual"  && length args == 2 = Just (intercalate " " [args!!0,"=",args!!1])
-                  | otherwise = Nothing
+-- todo: add < + etc
+stdPrintInfo :: [PrintInfo]
+stdPrintInfo = [("setSubset",       (Infix,4,"\\subseteq"))
+               ,("setElem",         (Infix,2,"\\in"))
+               ,("setEqual",        (Infix,4,"\\="))
+               ,("setUnion",        (Infix,8,"\\union"))
+               ,("setIntersection", (Infix,8,"\\intersect"))
+               -- arithmetic operations
+               ,("arithmeticPlus", (Infix,4,"+"))
+               ,("arithmeticSub",  (Infix,4,"-"))
+               ,("arithmeticMul",  (Infix,6,"*"))
+               ,("arithmeticDiv",  (Infix,6,"/"))
+               ,("arithmeticNeg",  (Prefix,8,"-"))
+               -- numeric comparison operations
+               ,("numLTEQ", (Infix,2,"<="))
+               ,("numLT",   (Infix,2,"<"))
+               ,("numMTEQ", (Infix,2,">="))
+               ,("numMT",   (Infix,2,">"))
+               ,("numEQ",   (Infix,2,"="))
+               ]
 
 stdContext :: PrintContext
-stdContext = PCon { printFunction = printSetFn }
+stdContext = PCon { printFunction = stdPrintInfo }
+
+prettyPrint = prettyPrintP (noContext { printFunction = stdPrintInfo })
+
+prettyPrintFn :: PrintContext -> String -> [Expression] -> String
+prettyPrintFn pc n es = case lookup n (printFunction pc) of
+                          Nothing       -> defaultStr n
+                          Just (f,p,n') -> case f of
+                                             Prefix -> if length es == 1 then let e = head es
+                                                                                  eStr = prettyPrintE pc e
+                                                                              in n' ++ bracketPP (isCompoundE e) eStr
+                                                                         else defaultStr n'
+                                             Infix -> if length es == 2 then let e = head es
+                                                                                 f = last es
+                                                                                 eStr = prettyPrintE pc e
+                                                                                 fStr = prettyPrintE pc f
+                                                                                 precE = precedenceE pc e
+                                                                                 precF = precedenceE pc f
+                                                                             in intercalate " " [bracketPP (precE <= p) eStr
+                                                                                                ,n'
+                                                                                                ,bracketPP (precF <= p) fStr]
+                                                                        else defaultStr n'
+                                             Nofix -> defaultStr n'
+    where defaultStr s = let es' = intercalate "," (map (prettyPrintE pc) es) in s++"("++es'++")"
+
+precedenceE :: PrintContext -> Expression -> Int
+-- 10 never needs brackets, 0 always needs brackets
+precedenceE pc (ExpN _)        = 10
+precedenceE pc (ExpFn n _)     = case lookup n (printFunction pc) of
+                                   Nothing       -> 10
+                                   Just (f,p,n') -> p
+precedenceE pc (ExpEquals _ _) = 0
+precedenceE pc (ExpPatVar _)   = 10
+precedenceE pc (ExpCut)        = 10
 
 bracketPP :: Bool -> String -> String
 bracketPP (True)  str = "("++str++")"
 bracketPP (False) str = str
 
+prettyPrintV :: PrintContext -> Variable -> String
+prettyPrintV pc (SimpleVar s)    = s
+prettyPrintV pc (IndexedVar s e) = s++"_"++bracketPP (isCompoundE e) (prettyPrintE pc e)
+prettyPrintV pc (VPatVar s)      = "V{"++s++"}"
+prettyPrintV pc (VCut)           = "(@)"
+
+prettyPrintN :: PrintContext -> Name -> String
+prettyPrintN pc (Var v)      = prettyPrintV pc v
+prettyPrintN pc (Constant s) = prettyPrintS pc s
+
+prettyPrintS :: PrintContext -> Special -> String
+prettyPrintS pc (SInt n)    = show n
+prettyPrintS pc (SBool b)   = take 1 $ show b
+prettyPrintS pc (SZ)        = "Z"
+prettyPrintS pc (SZplus)    = "Z+"
+prettyPrintS pc (SZn e)     = "Zn(" ++ (prettyPrintE pc e) ++ ")"
+prettyPrintS pc (SFinite e) = "{1,...,"++(prettyPrintE pc e)++"}"
+
+prettyPrintE :: PrintContext -> Expression -> String
+prettyPrintE pc (ExpN n)        = prettyPrintN pc n
+prettyPrintE pc (ExpFn f es)    = prettyPrintFn pc f es
+prettyPrintE pc (ExpEquals e f) = (prettyPrintE pc e) ++ " = " ++ (prettyPrintE pc f)
+prettyPrintE pc (ExpPatVar s)   = "E{"++s++"}"
+prettyPrintE pc (ExpCut)        = "(@)"
+
+prettyPrintP :: PrintContext -> Predicate -> String
+prettyPrintP pc (PExp e)         = prettyPrintE pc e
+prettyPrintP pc (PAnd p q)       = prettyPrintBinaryP pc ("&",precedenceP pc (PAnd p q)) p q
+prettyPrintP pc (POr p q)        = prettyPrintBinaryP pc ("|",precedenceP pc (POr p q)) p q
+prettyPrintP pc (PImp p q)       = prettyPrintBinaryP pc ("->",precedenceP pc (PImp p q)) p q
+prettyPrintP pc (PIff p q)       = prettyPrintBinaryP pc ("<->",precedenceP pc (PIff p q)) p q
+prettyPrintP pc (PNot p)         = let p' = bracketPP (isCompoundP p) (prettyPrintP pc p)
+                                   in "~"++p'
+prettyPrintP pc (PBinding t v p) = bs ++ (prettyPrintV pc v) ++ ". " ++ (prettyPrintP pc p)
+    where bs = if t == Forall then "forall " else "exists "
+prettyPrintP pc (PPatVar s)      = "P{"++s++"}"
+prettyPrintP pc (PCut)           = "(@)"
+
+prettyPrintBinaryP :: PrintContext -> (String,Int) -> Predicate -> Predicate -> String
+prettyPrintBinaryP pc (op,precOp) p q = let precP = precedenceP pc p
+                                            precQ = precedenceP pc q
+                                        in intercalate " " [bracketPP (precP <= precOp) $ prettyPrintP pc p
+                                                           ,op
+                                                           ,bracketPP (precQ <= precOp) $ prettyPrintP pc q]
+
+precedenceP :: PrintContext -> Predicate -> Int
+-- 10 is max and indicates that they never need brackets
+-- 0 is the minimum and indicates that they always need brackets (unless they are the top level statement)
+precedenceP pc (PExp _)         = 10
+precedenceP pc (PAnd _ _)       = 6
+precedenceP pc (POr _ _)        = 6
+precedenceP pc (PImp _ _)       = 3
+precedenceP pc (PIff _ _)       = 3
+precedenceP pc (PNot _)         = 8
+precedenceP pc (PBinding _ _ _) = 0
+precedenceP pc (PPatVar _)      = 10
+precedenceP pc (PCut)           = 10
+
+{-
 prettyPrintT :: PrintContext -> Type -> String
 prettyPrintT pc (AbstractSetT) = "SET"
 prettyPrintT pc (PredicateT)   = "BOOL"
@@ -114,6 +231,8 @@ prettyPrint = prettyPrintP stdContext
 prettyPrintPC (PC mt ds st) = unpack $ replace "(@)" stT mtT
     where mtT = pack $ prettyPrint mt
           stT = snoc (cons '[' (pack $ prettyPrint st)) ']'
+
+          -}
 {-
 Each call has responsibility of bracketing its parts, 
 therefore, prettyPrint should never bracket the entire string, only its subexpressions/subpredicates

@@ -34,18 +34,13 @@ import Text.Parsec.String(Parser)
  - Need to be able to define functions (maybe separately from Predicates, but using
  - the predicate parser)
  -
- - We should have a parser for latex expressions
+ - NOTE: we use try a lot as the data types are not the most useful for parsing
+ - it might be better to use an intermediate AST
  -
  - TODO: (1) a parser for latex expressions (maybe it already exists, it is in HaTeX)
- -       (2) add infix operators for expressions DONE
- -       (3) typed expressions (or maybe type is an infix operator?)
- -           Just use brackets <exp> :: {type} ??
- -       (4) Need a strategy deal with reserved words (i.e. force the parser to fail and use try)
- -       (5) We will need if expressions, case expressions e.g. gcd(m,n) = m if m==n, m-n if m > n, n-m if n > m
+ -       (2) We will need if expressions, case expressions e.g. gcd(m,n) = m if m==n, m-n if m > n, n-m if n > m
  -           These could be done at a level higher than predicates, rather than within predicates
- -       (6) We need more sophisticated ways to deal with operators so we can add a greater variety
- -           Currently adding more is likely to break the parser e.g. we need to prevent -> parsing as -, then >
- -           (c.f. Left factoring of grammar - maybe use a Patricia Trie)
+ -
  -}
 
 
@@ -53,6 +48,101 @@ import Text.Parsec.String(Parser)
 testP :: Parser a -> String -> Either ParseError a
 testP p str = parse (whitespace >> p) "(fail)" str
 
+{- ----- helper functions ----- -}
+
+whitespace :: Parser ()
+whitespace = void $ spaces --many $ oneOf " \n\t"
+
+lexeme :: Parser a -> Parser a
+lexeme p = p <* whitespace
+
+parens :: Parser a -> Parser a
+parens p = lexeme (char '(') *> p <* lexeme (char ')')
+
+{- ----- general parsers ----- -}
+
+-- | parses a variable name - one or more (upper or lower case) letters
+-- Note: this accepts forall and exists so predicate binding must be tried first
+varname :: Parser String
+varname = lexeme (many1 letter)
+
+-- | parses a pattern variable for names
+patvarStr :: Char -> Parser String
+patvarStr t = lexeme (string (t:"{") *> patname <* char '}')
+
+-- | parses a pattern variable name - a letter (upper- or lowercase) followed by one or more letters or digits
+patname :: Parser String
+patname = (:) <$> letter <*> many (letter <|> digit)
+
+{- ----- parsing Variable ----- -}
+
+-- TODO: should we make the variable parsers fail if the varname is followed by (
+parseSimpleVar :: Parser Variable
+parseSimpleVar = SimpleVar <$> varname
+
+--parseIndexedVar :: Parser Variable
+parseIndexedVar = IndexedVar <$> varname <*> (char '_' *> pure (ExpN (Constant SZ)))
+
+parseVPatVar :: Parser Variable
+parseVPatVar = VPatVar <$> patvarStr 'V'
+
+parseVariable :: Parser Variable
+parseVariable = try parseIndexedVar <|> try parseVPatVar <|> try parseSimpleVar <?> "variable"
+
+--parseVar :: Parser Variable
+--parseVar = do vn <- many1 letter
+--              c <- lookAhead anyChar
+--              if c == '_' then do { void $ char '_'; string "exp"; return $ IndexedVar vn (ExpN (Constant SZ)) }
+--                          else return $ SimpleVar vn
+
+{- ----- parse Special ----- -}
+
+parseInt :: Parser Special
+parseInt = (SInt . read) <$> lexeme (many1 digit)
+
+parseBool :: Parser Special
+parseBool = do b <- oneOf "TF"
+               if b == 'T' then return $ SBool True
+                           else return $ SBool False
+
+parseZ :: Parser Special
+parseZ = do void $ char 'Z'
+            notFollowedBy (letter <|> oneOf "_+")
+            return SZ
+
+parseZplus :: Parser Special
+parseZplus = do void $ string "Z+"
+                return SZplus
+
+parseZn :: Parser Special
+parseZn = do void $ string "Zn"
+             e <- parens (string "exp")
+             return $ SZn (ExpN (Var (SimpleVar "exp")))
+
+parseFinite :: Parser Special
+parseFinite = do void $ string "{1,...,"
+                 e <- string "exp"
+                 void $ char '}'
+                 return $ SFinite (ExpN (Var (SimpleVar "exp")))
+
+parseSpecial :: Parser Special
+parseSpecial =     try parseFinite
+               <|> try parseZn
+               <|> try parseZplus
+               <|> try parseZ
+               <|> try parseBool
+               <|> try parseInt
+               <?> "constant"
+
+{- ----- parse Name ----- -}
+
+parseName :: Parser Name
+parseName =     try (Constant <$> parseSpecial)
+            <|> try (Var <$> parseVariable)
+            <?> "name"
+
+{- ----- parse Expressions ----- -}
+{-
 {- ----- parsing predicates ----- -}
 
 predexp :: Parser Predicate
@@ -224,16 +314,7 @@ constname = lexeme ((:) <$> first <*> many rest)
     where first = satisfy (\c -> isLetter c && isUpper c)
           rest = letter <|> digit
 
-{- ----- helper functions ----- -}
 
-whitespace :: Parser ()
-whitespace = void $ spaces --many $ oneOf " \n\t"
-
-lexeme :: Parser a -> Parser a
-lexeme p = p <* whitespace
-
-parens :: Parser a -> Parser a
-parens p = lexeme (char '(') *> p <* lexeme (char ')')
 
 {- ---------- Data types ---------- -}
 {-
@@ -283,4 +364,5 @@ data Predicate = PEmpty
                | PCut
     deriving (Eq)
 
+-}
 -}

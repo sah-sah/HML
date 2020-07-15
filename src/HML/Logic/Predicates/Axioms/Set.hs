@@ -18,6 +18,30 @@ import HML.Logic.Predicates.PredicateProofGraph
 
 --data NamedPredicate = NP String Predicate deriving (Show)
 
+{- ---------- Building Set Expressions ----------- -}
+{- TODO: these should be in Axioms.Set -}
+emptySet :: Expression
+emptySet = namedExp $ constN "0"
+
+isASet :: PName -> Predicate
+isASet n = typedExpP (namedExp n) AbstractSetT
+
+intersection, union, subset, equalSet, symDiff, diff, cross :: Expression -> Expression -> Expression
+intersection a b = ExpF "setIntersection" [a,b]
+union a b = ExpF "setUnion" [a,b]
+subset a b = ExpF "setSubset" [a,b]
+equalSet a b = ExpF "setEqual" [a,b]
+symDiff a b = ExpF "setSymmetricDifference" [a,b]
+diff a b = ExpF "setDifference" [a,b]
+cross a b = ExpF "setCrossProduct" [a,b]
+
+complement :: Expression -> Expression
+complement a = ExpF "setComplement" [a]
+
+inSet :: Expression -> Expression -> Expression
+inSet e se = ExpF "setElem" [e,se]
+
+
 
 --namePredicate :: Predicate -> String -> NamedPredicate
 {- ---------- Some set axioms ------------ -}
@@ -48,6 +72,30 @@ subsetAxiom = namePredicate (iffP (expP $ (setA `subset` setB))
 
           varX = patternN "x"
           expX = namedExp varX
+
+{- ---------- Examples ---------- -}
+
+-- definition of subset
+subsetDefn :: Predicate
+-- note: we will need extra predicates to make this useful
+-- e.g. setA is a Set, setB is a Set,
+-- then these imply that setA `subset` setB has type PredicateT (Bool)
+-- A logic law will involve matching at least one, but maybe more, predicates
+-- e.g. to use subsetDefn we need to match A is a Set, B is a Set, A subset B
+subsetDefn = iffP (expP $ (setA `subset` setB))
+                  (forall_ nameX ((expP $ inSet varX setA) `impP` (expP $ inSet varX setB)))
+    where setA = namedExp $ varN "A"
+          setB = namedExp $ varN "B"
+
+          nameX = varN "x"
+          varX = namedExp nameX
+
+setEqDefn :: Predicate
+setEqDefn = iffP (expP $ (setA `equalSet` setB))
+                 (andP (expP $ (setA `subset` setB))
+                       (expP $ (setB `subset` setA)))
+    where setA = namedExp $ varN "A"
+          setB = namedExp $ varN "B"
 
 {- ------ Examples of set proofs we should be able to do -------- -}
 {-
