@@ -7,6 +7,7 @@ module HML.Logic.Predicates.PredicateMatching where
 
 import HML.Logic.Predicates.Predicates
 import HML.Logic.Predicates.PredicateCursors
+import HML.Logic.Predicates.PredicatesPrettyPrint(prettyPrint)
 
 import Data.List(sortBy)
 import Control.Monad
@@ -39,7 +40,7 @@ Note p -> (q -> r) is equivalent to p&q -> r
 --data PredicateMatching = PMatching [(String,Predicate)] [(String,PName)] deriving (Show)
 data PredicateMatching = PMatching { predicatePatterns :: [(String,Predicate)]
                                    , expressionPatterns :: [(String,Expression)]
-                                   , namePatterns :: [(String,PName)]
+                                   , variablePatterns :: [(String,Variable)]
                                    } deriving (Show)
 
 -- Note: LogicLaws will not capture all the deductions we need to make
@@ -51,7 +52,7 @@ data PredicateMatching = PMatching { predicatePatterns :: [(String,Predicate)]
 
 
 joinMatching :: PredicateMatching -> PredicateMatching -> PredicateMatching
-joinMatching (PMatching pPats1 ePats1 nPats1) (PMatching pPats2 ePats2 nPats2) = PMatching (pPats1++pPats2) (ePats1++ePats2) (nPats1++nPats2)
+joinMatching (PMatching pPats1 ePats1 vPats1) (PMatching pPats2 ePats2 vPats2) = PMatching (pPats1++pPats2) (ePats1++ePats2) (vPats1++vPats2)
 
 getPMatch :: String -> PredicateMatching -> Maybe Predicate
 getPMatch n pm = lookup n (predicatePatterns pm)
@@ -59,55 +60,65 @@ getPMatch n pm = lookup n (predicatePatterns pm)
 getEMatch :: String -> PredicateMatching -> Maybe Expression
 getEMatch n pm = lookup n (expressionPatterns pm)
 
-getNMatch :: String -> PredicateMatching -> Maybe PName
-getNMatch n pm = lookup n (namePatterns pm)
+getVMatch :: String -> PredicateMatching -> Maybe Variable
+getVMatch n pm = lookup n (variablePatterns pm)
 
-createMatching :: [(String,Predicate)] -> [(String,Expression)] -> [(String,PName)] -> PredicateMatching
+createMatching :: [(String,Predicate)] -> [(String,Expression)] -> [(String,Variable)] -> PredicateMatching
 createMatching = PMatching
-
---NOTE: I don't think this is needed
---renameNMatch :: String -> PName -> PredicateMatching -> PredicateMatching
---renameNMatch n npn (PMatching ps ns) = PMatching ps (map update' ns)
---    where update' (m,pm) | n == m    = (m,npn)
---                         | otherwise = (m,pm)
 
 bindToForm :: Predicate -> Predicate -> Maybe PredicateMatching
 --bindToForm f p returns Just b where b is the matching of p to f (if p has the same form as f),
 --and returns Nothing otherwise 
 bindToForm (PPatVar s)         p                   = Just (PMatching [(s,p)] [] [])
-bindToForm (PBinary op1 p1 q1) (PBinary op2 p2 q2) = do b1 <- bindToForm p1 p2
+bindToForm (PAnd p1 q1)        (PAnd p2 q2)        = do b1 <- bindToForm p1 p2
                                                         b2 <- bindToForm q1 q2
-                                                        if op1==op2 then return (joinMatching b1 b2) else Nothing
-bindToForm (PUnary op1 p1)     (PUnary op2 p2)     = if op1==op2 then bindToForm p1 p2 else Nothing
-bindToForm (PBinding pb1 p1)   (PBinding pb2 p2)   = do m1 <- bindToFormPB pb1 pb2
-                                                        m2 <- bindToForm p1 p2
-                                                        return (joinMatching m1 m2)
+                                                        return (joinMatching b1 b2)
+bindToForm (POr p1 q1)         (POr p2 q2)         = do b1 <- bindToForm p1 p2
+                                                        b2 <- bindToForm q1 q2
+                                                        return (joinMatching b1 b2)
+bindToForm (PImp p1 q1)        (PImp p2 q2)        = do b1 <- bindToForm p1 p2
+                                                        b2 <- bindToForm q1 q2
+                                                        return (joinMatching b1 b2)
+bindToForm (PIff p1 q1)        (PIff p2 q2)        = do b1 <- bindToForm p1 p2
+                                                        b2 <- bindToForm q1 q2
+                                                        return (joinMatching b1 b2)
+bindToForm (PNot p1)           (PNot p2)           = bindToForm p1 p2
+bindToForm (PBinding t1 v1 p1) (PBinding t2 v2 p2) = if t1 == t2 then do m1 <- bindToFormV v1 v2
+                                                                         m2 <- bindToForm p1 p2
+                                                                         return (joinMatching m1 m2)
+                                                                 else Nothing
 bindToForm (PExp e1)           (PExp e2)           = bindToFormExp e1 e2
-bindToForm (PExpT e1 t1)       (PExpT e2 t2)       = if t1==t2 then bindToFormExp e1 e2 else Nothing
-bindToForm (PEmpty)            (PEmpty)            = Just (PMatching [] [] [])
 bindToForm _                   _                   = Nothing
 
 bindToFormExp :: Expression -> Expression -> Maybe PredicateMatching
-bindToFormExp (ExpPatVar s) e             = Just (PMatching [] [(s,e)] [])
-bindToFormExp (ExpN pn1)    (ExpN pn2)    = bindToFormPN pn1 pn2
-bindToFormExp (ExpF n1 es1) (ExpF n2 es2) = if n1==n2 then (foldl1 joinMatching) `liftM` (zipWithM bindToFormExp es1 es2)
-                                                      else Nothing 
-bindToFormExp _             _             = Nothing
+bindToFormExp (ExpPatVar s)     e                 = Just (PMatching [] [(s,e)] [])
+bindToFormExp (ExpN n1)         (ExpN n2)         = bindToFormN n1 n2
+bindToFormExp (ExpFn n1 es1)    (ExpFn n2 es2)    = if n1==n2 then (foldl1 joinMatching) `liftM` (zipWithM bindToFormExp es1 es2)
+                                                              else Nothing
+bindToFormExp (ExpEquals e1 f1) (ExpEquals e2 f2) = do b1 <- bindToFormExp e1 e2
+                                                       b2 <- bindToFormExp f1 f2
+                                                       return (joinMatching b1 b2)
+bindToFormExp _                 _             = Nothing
 
-bindToFormPB :: PredicateBinding -> PredicateBinding -> Maybe PredicateMatching
-bindToFormPB (Forall pn1 p1) (Forall pn2 p2) = do m1 <- bindToFormPN pn1 pn2
-                                                  m2 <- bindToForm p1 p2
-                                                  return (joinMatching m1 m2)
-bindToFormPB (Exists pn1 p1) (Exists pn2 p2) = do m1 <- bindToFormPN pn1 pn2
-                                                  m2 <- bindToForm p1 p2
-                                                  return (joinMatching m1 m2)
-bindToFormPB _               _               = Nothing
+bindToFormN :: Name -> Name -> Maybe PredicateMatching
+bindToFormN (Var v1)      (Var v2)      = bindToFormV v1 v2
+bindToFormN (Constant c1) (Constant c2) = bindToFormS c1 c2
+bindToFormN _             _             = Nothing
 
-bindToFormPN :: PName -> PName -> Maybe PredicateMatching
-bindToFormPN (NPatVar s) pn          = Just (PMatching [] [] [(s,pn)])
-bindToFormPN (PVar s1)   (PVar s2)   = if s1==s2 then Just (PMatching [] [] []) else Nothing
-bindToFormPN (PConst s1) (PConst s2) = if s1==s2 then Just (PMatching [] [] []) else Nothing
-bindToFormPN _           _           = Nothing
+bindToFormV :: Variable -> Variable -> Maybe PredicateMatching
+bindToFormV (VPatVar s)        v                  = Just (PMatching [] [] [(s,v)])
+bindToFormV (SimpleVar s1)     (SimpleVar s2)     = if s1==s2 then Just (PMatching [] [] []) else Nothing
+bindToFormV (IndexedVar s1 e1) (IndexedVar s2 e2) = if s1==s2 then bindToFormExp e1 e2 else Nothing
+bindToFormV _                  _                  = Nothing
+
+bindToFormS :: Special -> Special -> Maybe PredicateMatching
+bindToFormS (SInt n1)    (SInt n2)    = if n1==n2 then Just (PMatching [] [] []) else Nothing
+bindToFormS (SBool b1)   (SBool b2)   = if b1==b2 then Just (PMatching [] [] []) else Nothing
+bindToFormS (SZ)         (SZ)         = Just (PMatching [] [] [])
+bindToFormS (SZplus)     (SZplus)     = Just (PMatching [] [] [])
+bindToFormS (SZn e1)     (SZn e2)     = bindToFormExp e1 e2
+bindToFormS (SFinite e1) (SFinite e2) = bindToFormExp e1 e2
+bindToFormS _            _            = Nothing
 
 consistent :: PredicateMatching -> Bool
 --consistent pm returns True if pm is consistent (i.e. if a string is bound to 
@@ -128,83 +139,99 @@ apMatchingM :: PredicateMatching -> Predicate -> Maybe Predicate
 --apBinding pm p applies the matching pm to p, i.e., for each pattern variable in p
 --makes the substitution defined in pm
 --If the matching does not cover the pattern variables in p, nothing is returned
-apMatchingM pm p = apP' p
-    where apP' :: Predicate -> Maybe Predicate
-          apP' (PExp e)         = do e' <- apE' e
-                                     return (PExp e')
-          apP' (PExpT e t)      = do e' <- apE' e
-                                     return (PExpT e' t)
-          apP' (PBinary op p q) = do p' <- apP' p
-                                     q' <- apP' q
-                                     return (PBinary op p' q')
-          apP' (PUnary op p)    = do p' <- apP' p
-                                     return (PUnary op p')
-          apP' (PBinding pb p)  = do pb' <- apPB' pb
-                                     p' <- apP' p
-                                     return (PBinding pb' p')
-          apP' (PPatVar pv)     = getPMatch pv pm
-          apP' p                = Just p
+-- could be written in applicative style
+apMatchingM pm p = apP p
+    where apP :: Predicate -> Maybe Predicate
+          apP (PExp e)         = do e' <- apE e
+                                    return (PExp e')
+          apP (PAnd p q)       = do p' <- apP p
+                                    q' <- apP q
+                                    return (PAnd p' q')
+          apP (POr p q)        = do p' <- apP p
+                                    q' <- apP q
+                                    return (POr p' q')
+          apP (PImp p q)       = do p' <- apP p
+                                    q' <- apP q
+                                    return (PImp p' q')
+          apP (PIff p q)       = do p' <- apP p
+                                    q' <- apP q
+                                    return (PIff p' q')
+          apP (PNot p)         = do p' <- apP p
+                                    return (PNot p')
+          apP (PBinding t v p) = do v' <- apV v
+                                    p' <- apP p
+                                    return (PBinding t v' p')
+          apP (PPatVar pv)     = getPMatch pv pm
+          apP p                = Just p
 
-          apE' :: Expression -> Maybe Expression
-          apE' (ExpN pn)      = do pn' <- apPN' pn
-                                   return (ExpN pn')
-          apE' (ExpF n es)    = do es' <- mapM apE' es
-                                   return (ExpF n es')
-          apE' (ExpPatVar pv) = getEMatch pv pm
-          apE' e              = Just e 
+          apE :: Expression -> Maybe Expression
+          apE (ExpN n)        = do n' <- apN n
+                                   return (ExpN n')
+          apE (ExpFn n es)    = do es' <- mapM apE es
+                                   return (ExpFn n es')
+          apE (ExpEquals e f) = do e' <- apE e
+                                   f' <- apE f
+                                   return (ExpEquals e' f')
+          apE (ExpPatVar pv)  = getEMatch pv pm
+          apE e               = Just e
 
-          apPB' :: PredicateBinding -> Maybe PredicateBinding
-          apPB' (Forall pn p) = do pn' <- apPN' pn
-                                   p' <- apP' p
-                                   return (Forall pn' p')
-          apPB' (Exists pn p) = do pn' <- apPN' pn
-                                   p' <- apP' p
-                                   return (Exists pn' p')
+          apN :: Name -> Maybe Name
+          apN (Var v)      = do v' <- apV v
+                                return (Var v')
+          apN (Constant s) = do s' <- apS s
+                                return (Constant s')
 
-          apPN' :: PName -> Maybe PName
-          apPN' (NPatVar s) = getNMatch s pm
-          apPN' pn          = Just pn
+          apV :: Variable -> Maybe Variable
+          apV (IndexedVar s e) = do e' <- apE e
+                                    return (IndexedVar s e')
+          apV (VPatVar s)      = getVMatch s pm
+          apV v                = Just v
+
+          apS :: Special -> Maybe Special
+          apS (SZn e)     = do e' <- apE e
+                               return (SZn e')
+          apS (SFinite e) = do e' <- apE e
+                               return (SFinite e')
+          apS s           = Just s
+
 
 {- Examples -}
 
-egP1 = expP $ (setA `union` setB) `subset` setB
-    where setA = namedExp $ varN "A"
-          setB = namedExp $ varN "B"
+egP1 = PExp $ (ExpFn "setSubset" [(ExpFn "setUnion" [setA,setB]),setB])
+    where setA = ExpN $ Var $ SimpleVar "A"
+          setB = ExpN $ Var $ SimpleVar "B"
 
-formP1 = expP $ setP `subset` setQ
-    where setP = patternExp "P"
-          setQ = patternExp "Q"
+formP1 = PExp $ (ExpFn "setSubset" [setP,setQ])
+    where setP = ExpPatVar "P"
+          setQ = ExpPatVar "Q"
 
-toFormP1 = forall_ nameX ((expP $ inSet varX setP) `impP` (expP $ inSet varX setQ))
-    where setP = patternExp "P"
-          setQ = patternExp "Q"
+toFormP1 = PBinding Forall (SimpleVar "x") (PImp (PExp $ ExpFn "setElem" [varX,setP]) (PExp $ ExpFn "setElem" [varX,setQ]))
+    where setP = ExpPatVar "P"
+          setQ = ExpPatVar "Q"
 
-          nameX = varN "x"
-          varX = namedExp nameX
+          varX = ExpN $ Var $ SimpleVar "x"
 
 matchingP1 = bindToForm formP1 egP1
 afterMatchingP1 = do pm <- matchingP1
                      apMatchingM pm toFormP1
 
-egP2 = forall_ nameX ((expP $ inSet varX (setA `union` setB)) `impP` (expP $ inSet varX setB))
-    where setA = namedExp $ varN "A"
-          setB = namedExp $ varN "B"
+egP2 = PBinding Forall (SimpleVar "x") (PImp (PExp $ ExpFn "setElem" [varX,ExpFn "setUnion" [setA,setB]])
+                                             (PExp $ ExpFn "setElem" [varX,setB]))
+    where setA = ExpN $ Var $ SimpleVar "A"
+          setB = ExpN $ Var $ SimpleVar "B"
 
-          nameX = varN "x"
-          varX = namedExp nameX
+          varX = ExpN $ Var $ SimpleVar "x"
 
-formP2 = forall_ nameZ ((expP $ inSet varZ setP) `impP` (expP $ inSet varZ setQ))
-    where setP = patternExp "P"
-          setQ = patternExp "Q"
+formP2 = PBinding Forall (VPatVar "z") (PImp (PExp $ ExpFn "setElem" [varZ,setP]) (PExp $ ExpFn "setElem" [varZ,setQ]))
+    where setP = ExpPatVar "P"
+          setQ = ExpPatVar "Q"
 
-          nameZ = patternN "z"
-          varZ = namedExp nameZ
+          varZ = ExpN $ Var $ VPatVar "z"
 
-toFormP2 = expP $ (setP `subset` setQ)
-    where setP = patternExp "P"
-          setQ = patternExp "Q"
+toFormP2 = PExp (ExpFn "setSubset" [setP,setQ])
+    where setP = ExpPatVar "P"
+          setQ = ExpPatVar "Q"
 
 matchingP2 = bindToForm formP2 egP2
 afterMatchingP2 = do pm <- matchingP2
                      apMatchingM pm toFormP2
-

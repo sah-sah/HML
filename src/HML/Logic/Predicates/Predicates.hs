@@ -71,6 +71,11 @@ data Name = Var Variable
     deriving (Show, Eq)
 
 -- Names of special mathematical objects
+-- might need more general set expressions
+-- {2,...,4}, {x \in A | P(x) }
+-- these can be added as functions though
+-- these can just be part of the parser then represented as functions
+-- ???: Should we have a separate SetExpression type? 
 data Special = SInt Integer
              | SBool Bool
              | SZ
@@ -80,6 +85,7 @@ data Special = SInt Integer
     deriving (Show, Eq)
 
 -- general mathematical expressions, with equals a special case
+-- TODO: should we make function names a Variable
 data Expression = ExpN Name
                 | ExpFn String [Expression]
                 | ExpEquals Expression Expression

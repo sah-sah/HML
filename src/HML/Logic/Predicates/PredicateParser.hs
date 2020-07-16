@@ -81,7 +81,10 @@ parseSimpleVar :: Parser Variable
 parseSimpleVar = SimpleVar <$> varname
 
 --parseIndexedVar :: Parser Variable
-parseIndexedVar = IndexedVar <$> varname <*> (char '_' *> pure (ExpN (Constant SZ)))
+parseIndexedVar = IndexedVar <$> varname <*> (char '_' *> ix)
+    where ix =     try (parens expression)
+               <|> try (do { n <- parseName; return $ ExpN n })
+               <?> "index"
 
 parseVPatVar :: Parser Variable
 parseVPatVar = VPatVar <$> patvarStr 'V'
@@ -116,14 +119,14 @@ parseZplus = do void $ string "Z+"
 
 parseZn :: Parser Special
 parseZn = do void $ string "Zn"
-             e <- parens (string "exp")
-             return $ SZn (ExpN (Var (SimpleVar "exp")))
+             e <- parens expression
+             return $ SZn e
 
 parseFinite :: Parser Special
 parseFinite = do void $ string "{1,...,"
-                 e <- string "exp"
+                 e <- expression
                  void $ char '}'
-                 return $ SFinite (ExpN (Var (SimpleVar "exp")))
+                 return $ SFinite e
 
 parseSpecial :: Parser Special
 parseSpecial =     try parseFinite
@@ -141,9 +144,69 @@ parseName =     try (Constant <$> parseSpecial)
             <|> try (Var <$> parseVariable)
             <?> "name"
 
-{- ----- parse Expressions ----- -}
-{-
-{- ----- parsing predicates ----- -}
+{- ----- parse Expression ----- -}
+
+expression :: Parser Expression
+expression = buildExpressionParser optableExp expressionTerm <?> "expression"
+
+expressionTerm :: Parser Expression
+expressionTerm =     try parseEPatVar
+                 <|> try parseFn
+                 <|> try parseExpName
+                 <|> try (parens expression)
+                 <?> "expression term"
+
+parseExpName :: Parser Expression
+parseExpName = ExpN <$> parseName
+
+parseFn :: Parser Expression
+parseFn = ExpFn <$> varname <*> lexeme args
+    where args = between (char '(') (char ')') $ sepBy1 expression (char ',')
+
+parseEPatVar :: Parser Expression
+parseEPatVar = ExpPatVar <$> patvarStr 'E'
+
+-- | parses a function written in infix style
+infixfn :: Parser String
+infixfn = (char '\\' *> lexeme varname) <|> try operatorfn
+
+operatorfn :: Parser String
+operatorfn = do op <- lexeme (many1 $ oneOf "!@#$%&*-+=|<>?/:~")
+                if op `elem` reservedOps then parserFail "reserved op"
+                                         else return op
+    where reservedOps = ["=","&","|","~","->","<->","+","-","/","*"]
+
+
+-- constructing the operator table for expressions
+binaryE op assoc = Infix ((mkBinaryFn . ExpFn) <$> expBOp op) assoc
+unaryE op = Prefix ((mkUnaryFn . ExpFn) <$> expUOp op)
+
+mkBinaryFn :: ([Expression] -> Expression) -> Expression -> Expression -> Expression
+mkBinaryFn expCon e f = expCon [e,f]
+
+mkUnaryFn :: ([Expression] -> Expression) -> Expression -> Expression
+mkUnaryFn expCon e = expCon [e]
+
+optableExp = [ [Infix ((mkBinaryFn . ExpFn) <$> infixfn) AssocNone]
+             , [unaryE "-"]
+             , [binaryE "*" AssocLeft, binaryE "/" AssocLeft]
+             , [binaryE "+" AssocLeft, binaryE "-" AssocLeft]
+             , [Infix (do { lexeme $ void $ char '='; return ExpEquals }) AssocNone]
+             ]
+
+expBOp, expUOp :: String -> Parser String
+expBOp "+" = lexeme (char '+') *> pure "addNum"
+expBOp "-" = lexeme minus *> pure "subtractNum"
+expBOp "/" = lexeme (char '/') *> pure "divideNum"
+expBOp "*" = lexeme (char '*') *> pure "multipleNum"
+expBOp "=" = lexeme (char '=') *> pure "equals"
+
+expUOp "-" = (char '-') *> pure "negateNum"
+
+minus :: Parser ()
+minus = try (do { void $ char '-'; notFollowedBy (char '>') })
+
+{- ----- parsing Predicates ----- -}
 
 predexp :: Parser Predicate
 predexp = PExp <$> expression
@@ -151,52 +214,53 @@ predexp = PExp <$> expression
 ppatvar :: Parser Predicate
 ppatvar = PPatVar <$> patvarStr 'P'
 
-pterm :: Parser Predicate
-pterm = boundpred <|> predexp <|> ppatvar <|> parens predicate
+predicateTerm :: Parser Predicate
+predicateTerm =     try boundpred
+                <|> try predexp
+                <|> try ppatvar
+                <|> try (parens predicate)
+                <?> "predicate term"
 -- NOTE: we need to try boundpred first so forall and exists aren't read as variable names
 
 predicate :: Parser Predicate
-predicate = buildExpressionParser optable pterm <?> "predicate expression"
+predicate = buildExpressionParser optableP predicateTerm <?> "predicate expression"
 
 -- constructing the operator table
-binary op assoc = Infix (PBinary <$> bop op) assoc
-unary op = Prefix (PUnary <$> uop op)
+binary op assoc = Infix (bop op) assoc
+unary op = Prefix (uop op)
 
-optable = [ [unary PNot]
-          , [binary PAnd AssocLeft, binary POr AssocLeft, binary PXOr AssocNone]
-          , [binary PImp AssocNone, binary PIff AssocLeft]]
+optableP = [ [unary "not"]
+           , [binary "and" AssocLeft, binary "or" AssocLeft]
+           , [binary "imp" AssocNone, binary "iff" AssocLeft]]
 
-bop :: PBOp -> Parser PBOp
-bop PAnd = lexeme (char '&') *> pure PAnd
-bop POr  = lexeme (char '|') *> pure POr
-bop PXOr = lexeme (string "x|") *> pure PXOr
-bop PImp = lexeme (string "->") *> pure PImp
-bop PIff = lexeme (string "<->") *> pure PIff
+bop :: String -> Parser (Predicate -> Predicate -> Predicate)
+bop "and" = lexeme (char '&') *> pure PAnd
+bop "or"  = lexeme (char '|') *> pure POr
+bop "imp" = lexeme (string "->") *> pure PImp
+bop "iff" = lexeme (string "<->") *> pure PIff
 
-uop :: PUOp -> Parser PUOp
-uop PNot = lexeme (char '~') *> pure PNot
+uop :: String -> Parser (Predicate -> Predicate)
+uop "not" = lexeme (char '~') *> pure PNot
 
 boundpred :: Parser Predicate
-boundpred = PBinding <$> lexeme (forallPB <|> existsPB) <*> predicate
+boundpred = do pb <- lexeme (forallPB <|> existsPB)
+               p <- predicate
+               return $ pb p
 
 -- | parser forall <pname>. or forall <pname> s.t. <predicate>.
-forallPB, existsPB :: Parser PredicateBinding
+forallPB, existsPB :: Parser (Predicate -> Predicate)
 forallPB = do void $ lexeme $ string "forall"
-              pn <- lexeme pname
-              p <- justDot <|> suchThat
-              return $ Forall pn p
-    where justDot = char '.' *> pure PEmpty
-          suchThat = lexeme (string "s.t.") *> predicate <* char '.'
+              v <- lexeme parseVariable
+              char '.'
+              return $ (PBinding Forall v)
 
 existsPB = do void $ lexeme $ string "exists"
-              pn <- lexeme pname
-              p <- justDot <|> suchThat
-              return $ Exists pn p
-    where justDot = char '.' *> pure PEmpty
-          suchThat = lexeme (string "s.t.") *> predicate <* char '.'
+              v <- lexeme parseVariable
+              char '.'
+              return $ (PBinding Exists v)
 
 {- ----- parsing expressions ----- -}
-
+{-
 -- | parses an expression pattern variable
 epatvar :: Parser Expression
 epatvar = ExpPatVar <$> patvarStr 'E'
