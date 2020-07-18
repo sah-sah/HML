@@ -1,132 +1,164 @@
 {--
  -- Base.hs
- -- :l ./HML/Logic/PredicateLogic/Axioms/Base.hs from devel directory
  -- Basic axioms derived from the logic laws
  --}
 module HML.Logic.Predicates.Axioms.Base where
 
---import HML.Logic.PredicateLogic.Predicates
---import HML.Logic.PredicateLogic.PredicateCursors
---import HML.Logic.PredicateLogic.PredicateMatching
 import HML.Logic.Predicates.PredicateLogicLaws
 import HML.Logic.Predicates.PredicateProofGraph
---import HML.Logic.PredicateLogic.PredicatesPrettyPrint
 
---import Data.List(intercalate, intersect)
---import Control.Monad(mplus,liftM,liftM2)
---import Control.Monad.State
-
---data NamedPredicate = NP String Predicate deriving (Show)
-
-
---namePredicate :: Predicate -> String -> NamedPredicate
-{- ---------- Some set axioms ------------ -}
-{-
-setAxioms :: [NamedPredicate]
-setAxioms = [ subsetAxiom
-            , unionAxiom]
-
-unionAxiom :: NamedPredicate
-unionAxiom = namePredicate (forall_ varX (iffP (expP $ inSet expX (union setA setB)) 
-                                               ((expP $ inSet expX setA) `orP` (expP $ inSet expX setB))))
-                           "unionAxiom"
-    where setA = patternExp "A"
-          setB = patternExp "B"
-          
-          varX = patternN "x"
-          expX = namedExp varX
-
-subsetAxiom :: NamedPredicate
--- TODO: should the variable be a pattern as well?
--- probably not necessary as we can instantiate to a specific variable name
--- but then again, using a pattern allows for more flexibility in naming
-subsetAxiom = namePredicate (iffP (expP $ (setA `subset` setB))
-                                  (forall_ varX ((expP $ inSet expX setA) `impP` (expP $ inSet expX setB))))
-                            "subsetAxiom"
-    where setA = patternExp "A"
-          setB = patternExp "B"
-
-          varX = patternN "x"
-          expX = namedExp varX
--}
 {- ---------- Some standard axioms ---------- -}
 
+standardAxioms :: [AxiomSchema]
+standardAxioms = [equivalenceAxiom
+                 ,implicationAxiom
+                 ,doubleNegationAxiom
+                 ,idempotentAndAxiom
+                 ,idempotentOrAxiom
+                 ,commutativeAndAxiom
+                 ,commutativeOrAxiom
+                 ,associativeAndAxiom
+                 ,associativeOrAxiom
+                 ,distributiveAndAxiom
+                 ,distributiveOrAxiom
+                 ,deMorgansAndAxiom
+                 ,deMorgansOrAxiom
+                 ,identityAndAxiom
+                 ,identityOrAxiom
+                 ,annihilationAndAxiom
+                 ,annihilationOrAxiom
+                 ,inverseAndAxiom
+                 ,inverseOrAxiom
+                 ,absorptionAndAxiom
+                 ,absorptionOrAxiom
+                 ,deMorgansForallAxiom
+                 ,deMorgansExistsAxiom
+                 ,swapForallAxiom
+                 ,swapExistsAxiom]
 
-standardAxioms :: [NamedPredicate]
-standardAxioms = [ equivalenceAxiom
-                  ,implicationAxiom
-                  ,doubleNegationAxiom
-                  ,idempotentAndAxiom
-                  ,idempotentOrAxiom
-                  ,commutativeAndAxiom
-                  ,commutativeOrAxiom
-                  ,associativeAndAxiom
-                  ,associativeOrAxiom
-                  ,distributiveAndAxiom
-                  ,distributiveOrAxiom
-                  ,deMorgansAndAxiom
-                  ,deMorgansOrAxiom
-                  ,identityAndAxiom
-                  ,identityOrAxiom
-                  ,annihilationAndAxiom
-                  ,annihilationOrAxiom
-                  ,inverseAndAxiom
-                  ,inverseOrAxiom
-                  ,absorptionAndAxiom
-                  ,absorptionOrAxiom
-                  ,deMorgansForallAxiom
-                  ,deMorgansExistsAxiom
-                  ,swapForallAxiom
-                  ,swapExistsAxiom]
+equivalenceAxiom = AxiomSchema { schemaName = "equivalence"
+                               , schemaGroup = "Base"
+                               , schemaDescription = ""
+                               , schema = PredicateSchema equivalenceLaw }
 
-equivalenceAxiom = namePredicate equivalenceLaw "equivalence"
+implicationAxiom = AxiomSchema { schemaName = "implication"
+                               , schemaGroup = "Base"
+                               , schemaDescription = ""
+                               , schema = PredicateSchema implicationLaw }
 
-implicationAxiom = namePredicate implicationLaw "implication"
+doubleNegationAxiom = AxiomSchema { schemaName = "doubleNegation"
+                                  , schemaGroup = "Base"
+                                  , schemaDescription = ""
+                                  , schema = PredicateSchema doubleNegationLaw }
 
-doubleNegationAxiom = namePredicate doubleNegationLaw "doubleNegation"
+idempotentAndAxiom = AxiomSchema { schemaName = "idempotentAnd"
+                                 , schemaGroup = "Base"
+                                 , schemaDescription = ""
+                                 , schema = PredicateSchema idempotentAndLaw }
 
-idempotentAndAxiom = namePredicate idempotentAndLaw "idempotentAnd"
+idempotentOrAxiom = AxiomSchema { schemaName = "idempotentOr"
+                                , schemaGroup = "Base"
+                                , schemaDescription = ""
+                                , schema = PredicateSchema idempotentOrLaw }
 
-idempotentOrAxiom = namePredicate idempotentOrLaw "idempotentOr"
+commutativeAndAxiom = AxiomSchema { schemaName = "commutativeAnd"
+                                  , schemaGroup = "Base"
+                                  , schemaDescription = ""
+                                  , schema = PredicateSchema commutativeAndLaw }
 
-commutativeAndAxiom = namePredicate commutativeAndLaw "commutativeAnd"
+commutativeOrAxiom = AxiomSchema { schemaName = "commutativeOr"
+                                 , schemaGroup = "Base"
+                                 , schemaDescription = ""
+                                 , schema = PredicateSchema commutativeOrLaw }
 
-commutativeOrAxiom = namePredicate commutativeOrLaw "commutativeOr"
+associativeAndAxiom = AxiomSchema { schemaName = "associativeAnd"
+                                  , schemaGroup = "Base"
+                                  , schemaDescription = ""
+                                  , schema = PredicateSchema associativeAndLaw }
 
-associativeAndAxiom = namePredicate associativeAndLaw "associativeAnd"
+associativeOrAxiom = AxiomSchema { schemaName = "associativeOr"
+                                 , schemaGroup = "Base"
+                                 , schemaDescription = ""
+                                 , schema = PredicateSchema associativeOrLaw }
 
-associativeOrAxiom = namePredicate associativeOrLaw "associativeOr"
+distributiveAndAxiom = AxiomSchema { schemaName = "distributiveAnd"
+                                   , schemaGroup = "Base"
+                                   , schemaDescription = ""
+                                   , schema = PredicateSchema distributiveAndLaw }
 
-distributiveAndAxiom = namePredicate distributiveAndLaw "distributiveAnd"
+distributiveOrAxiom = AxiomSchema { schemaName = "distributiveOr"
+                                  , schemaGroup = "Base"
+                                  , schemaDescription = ""
+                                  , schema = PredicateSchema distributiveOrLaw }
 
-distributiveOrAxiom = namePredicate distributiveOrLaw "distributiveOr"
+deMorgansAndAxiom = AxiomSchema { schemaName = "deMorgansAnd"
+                                , schemaGroup = "Base"
+                                , schemaDescription = ""
+                                , schema = PredicateSchema deMorgansAndLaw }
 
-deMorgansAndAxiom = namePredicate deMorgansAndLaw "deMorgansAnd"
+deMorgansOrAxiom = AxiomSchema { schemaName = "deMorgansOr"
+                               , schemaGroup = "Base"
+                               , schemaDescription = ""
+                               , schema = PredicateSchema deMorgansOrLaw }
 
-deMorgansOrAxiom = namePredicate deMorgansOrLaw "deMorgansOr"
+identityAndAxiom = AxiomSchema { schemaName = "identityAnd"
+                               , schemaGroup = "Base"
+                               , schemaDescription = ""
+                               , schema = PredicateSchema identityAndLaw }
 
-identityAndAxiom = namePredicate identityAndLaw "identityAnd"
+identityOrAxiom = AxiomSchema { schemaName = "identityOr"
+                              , schemaGroup = "Base"
+                              , schemaDescription = ""
+                              , schema = PredicateSchema identityOrLaw }
 
-identityOrAxiom = namePredicate identityOrLaw "identityOr"
+annihilationAndAxiom = AxiomSchema { schemaName = "annihilationAnd"
+                                   , schemaGroup = "Base"
+                                   , schemaDescription = ""
+                                   , schema = PredicateSchema annihilationAndLaw }
 
-annihilationAndAxiom = namePredicate annihilationAndLaw "annihilationAnd"
+annihilationOrAxiom = AxiomSchema { schemaName = "annihilationOr"
+                                  , schemaGroup = "Base"
+                                  , schemaDescription = ""
+                                  , schema = PredicateSchema annihilationOrLaw }
 
-annihilationOrAxiom = namePredicate annihilationOrLaw "annihilationOr"
+inverseAndAxiom = AxiomSchema { schemaName = "inverseAnd"
+                              , schemaGroup = "Base"
+                              , schemaDescription = ""
+                              , schema = PredicateSchema inverseAndLaw }
 
-inverseAndAxiom = namePredicate inverseAndLaw "inverseAnd"
+inverseOrAxiom = AxiomSchema { schemaName = "inverseOr"
+                             , schemaGroup = "Base"
+                             , schemaDescription = ""
+                             , schema = PredicateSchema inverseOrLaw }
 
-inverseOrAxiom = namePredicate inverseOrLaw "inverseOr"
+absorptionAndAxiom = AxiomSchema { schemaName = "absorptionAnd"
+                                 , schemaGroup = "Base"
+                                 , schemaDescription = ""
+                                 , schema = PredicateSchema absorptionAndLaw }
 
-absorptionAndAxiom = namePredicate absorptionAndLaw "absorptionAnd"
+absorptionOrAxiom = AxiomSchema { schemaName = "absorptionOr"
+                                , schemaGroup = "Base"
+                                , schemaDescription = ""
+                                , schema = PredicateSchema absorptionOrLaw }
 
-absorptionOrAxiom = namePredicate absorptionOrLaw "absorptionOr"
+deMorgansForallAxiom = AxiomSchema { schemaName = "deMorgansForall"
+                                   , schemaGroup = "Base"
+                                   , schemaDescription = ""
+                                   , schema = PredicateSchema deMorgansForallLaw }
 
-deMorgansForallAxiom = namePredicate deMorgansForallLaw "deMorgansForall"
+deMorgansExistsAxiom = AxiomSchema { schemaName = "deMorgansExists"
+                                   , schemaGroup = "Base"
+                                   , schemaDescription = ""
+                                   , schema = PredicateSchema deMorgansExistsLaw }
 
-deMorgansExistsAxiom = namePredicate deMorgansExistsLaw "deMorgansExists"
+swapForallAxiom = AxiomSchema { schemaName = "swapForall"
+                              , schemaGroup = "Base"
+                              , schemaDescription = ""
+                              , schema = PredicateSchema swapForallLaw }
 
-swapForallAxiom = namePredicate swapForallLaw "swapForall"
-
-swapExistsAxiom = namePredicate swapExistsLaw "swapExists"
+swapExistsAxiom = AxiomSchema { schemaName = "swapExists"
+                              , schemaGroup = "Base"
+                              , schemaDescription = ""
+                              , schema = PredicateSchema swapExistsLaw }
 
 

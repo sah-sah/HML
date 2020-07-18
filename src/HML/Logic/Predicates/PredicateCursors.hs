@@ -212,6 +212,10 @@ moveCursor :: PredicateCursor -> [Direction] -> PredicateCursor
 -- an unsafe version of moveCursorM
 moveCursor pc ds = maybe (error "moveCursor: invalid directions") id (moveCursorM pc ds)
 
+renameBoundVariableAtCut :: String -> String -> PredicateCursor -> Maybe PredicateCursor
+renameBoundVariableAtCut xn yn (PC mp ds sp) = do sp' <- renameBoundVariable xn yn sp
+                                                  return $ PC mp ds sp'
+
 {-
 availableDirections :: PredicateCursor -> [Direction]
 -- availableDirections pc returns the list of possible directions the cursor can take

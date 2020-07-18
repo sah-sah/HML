@@ -62,6 +62,10 @@ stdContext = PCon { printFunction = stdPrintInfo }
 
 prettyPrint = prettyPrintP (noContext { printFunction = stdPrintInfo })
 
+prettyPrintPC (PC mt ds st) = unpack $ replace "(@)" stT mtT
+    where mtT = pack $ prettyPrint mt
+          stT = snoc (cons '[' (pack $ prettyPrint st)) ']'
+
 prettyPrintFn :: PrintContext -> String -> [Expression] -> String
 prettyPrintFn pc n es = case lookup n (printFunction pc) of
                           Nothing       -> defaultStr n
@@ -110,6 +114,7 @@ prettyPrintN pc (Constant s) = prettyPrintS pc s
 prettyPrintS :: PrintContext -> Special -> String
 prettyPrintS pc (SInt n)    = show n
 prettyPrintS pc (SBool b)   = take 1 $ show b
+prettyPrintS pc (SEmptySet) = "{}"
 prettyPrintS pc (SZ)        = "Z"
 prettyPrintS pc (SZplus)    = "Z+"
 prettyPrintS pc (SZn e)     = "Zn(" ++ (prettyPrintE pc e) ++ ")"

@@ -9,6 +9,7 @@ module HML.Logic.Predicates.Predicates where
 
 import Data.List(nub)
 --import Control.Monad
+import Control.Applicative((<$>),(<*>))
 
 {-
 Use Hilbert style deductive system, with few inference rules and (infinitely) many axioms
@@ -58,6 +59,17 @@ data Expression = ExpN PName
 
 {- ---------- Data types ---------- -}
 
+{- We should probably use
+data Name = SimpleVar Variable
+          | IndexedVar Variable Expression
+          | Constant Special
+          | NCut
+
+data Variable = V String | VPatVar String
+
+maybe Special should have SCustom String option
+-}
+
 -- variables
 data Variable = SimpleVar String
               | IndexedVar String Expression
@@ -75,9 +87,10 @@ data Name = Var Variable
 -- {2,...,4}, {x \in A | P(x) }
 -- these can be added as functions though
 -- these can just be part of the parser then represented as functions
--- ???: Should we have a separate SetExpression type? 
+-- ???: Should we have a separate SetExpression type?
 data Special = SInt Integer
              | SBool Bool
+             | SEmptySet
              | SZ
              | SZplus
              | SZn Expression -- {0,...,n-1} where n is given by an expression
@@ -177,6 +190,11 @@ getVariables = nub . getVariablesP'
           getVariablesS' (SFinite e) = getVariablesE' e
           getVariablesS' _           = []
 
+variableString :: Variable -> Maybe String
+variableString (SimpleVar n)    = Just n
+variableString (IndexedVar n _) = Just n
+variableString _                = Nothing
+
 -- isCompound? is for whether brackets are needed
 isCompoundV :: Variable -> Bool
 isCompoundV (SimpleVar _)    = False
@@ -191,6 +209,7 @@ isCompoundN (Constant s) = isCompoundS s
 isCompoundS :: Special -> Bool
 isCompoundS (SInt _)    = False
 isCompoundS (SBool _)   = False
+isCompoundS (SEmptySet) = False
 isCompoundS (SZ)        = False
 isCompoundS (SZplus)    = False
 isCompoundS (SZn _)     = False
@@ -214,65 +233,75 @@ isCompoundP (PBinding _ _ _) = True
 isCompoundP (PPatVar _)      = False
 isCompoundP (PCut)           = False
 
-{-
 renameFreeVariable :: String -> String -> Predicate -> Maybe Predicate
--- would be easier if Predicate was a functor
--- renameFreeVariable xn yn p renames xn to yn in p p.v. yn does not occur in p
-renameFreeVariable xn yn p = if yn `elem` getVariableNames p then Nothing else Just (renameP' p)
-    where renameP' (PExp e)         = PExp (renameE' e)
-          renameP' (PExpT e t)      = PExpT (renameE' e) t
-          renameP' (PBinary op p q) = PBinary op (renameP' p) (renameP' q)
-          renameP' (PUnary op p)    = PUnary op (renameP' p)
-          renameP' (PBinding pb p)  = if captured' pb then PBinding pb p
-                                                      else PBinding (renamePB' pb) (renameP' p)
-          renameP' p                = p
+-- rename variable strings from xStr to yStr if yStr does not already appear in p
+renameFreeVariable xStr yStr p = if yStr `elem` (maybe [] id (mapM variableString $ getVariables p))
+                                 then Nothing
+                                 else Just (renameP p)
+    where renameP (PExp e)         = PExp $ renameE e
+          renameP (PAnd p q)       = PAnd (renameP p) (renameP q)
+          renameP (POr p q)        = POr (renameP p) (renameP q)
+          renameP (PImp p q)       = PImp (renameP p) (renameP q)
+          renameP (PIff p q)       = PIff (renameP p) (renameP q)
+          renameP (PNot p)         = PNot $ renameP p
+          renameP (PBinding t v p) = PBinding t (renameV v) (renameP p)
+          renameP p                = p
 
-          renamePB' (Forall pn p) = Forall (renamePN' pn) (renameP' p)
-          renamePB' (Exists pn p) = Exists (renamePN' pn) (renameP' p)
+          renameE (ExpN n)        = ExpN $ renameN n
+          renameE (ExpFn n es)    = ExpFn n $ map renameE es
+          renameE (ExpEquals e f) = ExpEquals (renameE e) (renameE f)
+          renameE e               = e
 
-          renameE' (ExpN pn)   = ExpN (renamePN' pn)
-          renameE' (ExpF n es) = ExpF n (map renameE' es)
-          renameE' e           = e
+          renameN (Var v)      = Var $ renameV v
+          renameN (Constant s) = Constant $ renameS s
 
-          renamePN' (PVar n) = PVar (if n == xn then yn else n)
-          renamePN' pn       = pn
+          renameV (SimpleVar n)    | n == xStr = SimpleVar yStr
+                                   | otherwise = SimpleVar n
+          renameV (IndexedVar n e) | n == xStr = IndexedVar yStr (renameE e)
+                                   | otherwise = IndexedVar n (renameE e)
+          renameV v                            = v
 
-          captured' (Forall (PVar n) _) = n == xn
-          captured' (Exists (PVar n) _) = n == xn
-          captured' _                   = False
+          renameS (SZn e)     = SZn $ renameE e
+          renameS (SFinite e) = SFinite $ renameE e
+          renameS s           = s
 
-{-
-renameBoundVariable :: String -> String -> Predicate -> Predicate
-renameBoundVariable xn yn p@(PBinding (Forall (PVar n) q) r) | n == xn   = PBinding (Forall (PVar n) (renameFreeVariable xn yn q)) (renameFreeVariable xn yn r)
-                                                             | otherwise = p
-renameBoundVariable xn yn p@(PBinding (Exists (PVar n) q) r) | n == xn   = PBinding (Exists (PVar n) (renameFreeVariable xn yn q)) (renameFreeVariable xn yn r)
-                                                             | otherwise = p
--}
 
-varToPatterns :: Predicate -> Predicate
-varToPatterns = vtpP'
-    where vtpP' (PExp e)         = case vtpE' e of
-                                     ExpPatVar n -> PPatVar n
-                                     e'          -> PExp e'
-          vtpP' (PExpT e t)      = PExpT (vtpE' e) t
-          vtpP' (PBinary op p q) = PBinary op (vtpP' p) (vtpP' q)
-          vtpP' (PUnary op p)    = PUnary op (vtpP' p)
-          vtpP' (PBinding pb p)  = PBinding (vtpPB' pb) (vtpP' p)
-          vtpP' p                = p
+renameBoundVariable :: String -> String -> Predicate -> Maybe Predicate
+renameBoundVariable xn yn (PBinding t (SimpleVar n) p) | xn == n   = do p' <- renameFreeVariable xn yn p
+                                                                        return $ PBinding t (SimpleVar yn) p'
+                                                       | otherwise = Nothing
+renameBoundVariable xn yn (PBinding t (IndexedVar n e) p) | xn == n   = do p' <- renameFreeVariable xn yn p
+                                                                           return $ PBinding t (IndexedVar yn e) p'
+                                                          | otherwise = Nothing
 
-          vtpPB' (Forall pn p) = Forall (vtpPN' pn) (vtpP' p)
-          vtpPB' (Exists pn p) = Exists (vtpPN' pn) (vtpP' p)
+-- we only change SimpleVar's and if there are IndexedVar's then return Nothing
+-- this is not sufficient, if we have ExpN $ Var $ VPatVar we should use ExpPatVar and same for PPatVar
+mkPatterns :: Predicate -> Maybe Predicate
+mkPatterns = vtpP
+    where vtpP (PExp e)         = PExp <$> vtpE e
+          vtpP (PAnd p q)       = PAnd <$> (vtpP p) <*> (vtpP q)
+          vtpP (POr p q)        = POr  <$> (vtpP p) <*> (vtpP q)
+          vtpP (PImp p q)       = PImp <$> (vtpP p) <*> (vtpP q)
+          vtpP (PIff p q)       = PIff <$> (vtpP p) <*> (vtpP q)
+          vtpP (PNot p)         = PNot <$> vtpP p
+          vtpP (PBinding t v p) = (PBinding t) <$> (vtpV v) <*> (vtpP p)
+          vtpP p                = Just p
 
-          vtpE' (ExpN pn)   = case vtpPN' pn of
-                                NPatVar n -> ExpPatVar n
-                                pn'       -> ExpN pn'
-          vtpE' (ExpF n es) = ExpF n (map vtpE' es)
-          vtpE' e           = e
+          vtpE (ExpN n)        = ExpN <$> vtpN n
+          vtpE (ExpFn n es)    = (ExpFn n) <$> mapM vtpE es
+          vtpE (ExpEquals e f) = ExpEquals <$> (vtpE e) <*> (vtpE f)
+          vtpE e               = Just e
 
-          vtpPN' (PVar n) = NPatVar n
-          vtpPN' pn       = pn
--}
+          vtpN (Var v)      = Var <$> vtpV v
+          vtpN (Constant s) = Constant <$> vtpS s
 
+          vtpV (SimpleVar n)    = Just $ VPatVar n
+          vtpV (IndexedVar n e) = Nothing
+          vtpV v                = Just v
+
+          vtpS (SZn e)     = SZn <$> vtpE e
+          vtpS (SFinite e) = SFinite <$> vtpE e
+          vtpS s           = Just s
 
 
 {- ---------- Examples ---------- -}

@@ -108,6 +108,10 @@ parseBool = do b <- oneOf "TF"
                if b == 'T' then return $ SBool True
                            else return $ SBool False
 
+parseEmptySet :: Parser Special
+parseEmptySet = do void $ string "{}"
+                   return SEmptySet
+
 parseZ :: Parser Special
 parseZ = do void $ char 'Z'
             notFollowedBy (letter <|> oneOf "_+")
@@ -133,6 +137,7 @@ parseSpecial =     try parseFinite
                <|> try parseZn
                <|> try parseZplus
                <|> try parseZ
+               <|> try parseEmptySet
                <|> try parseBool
                <|> try parseInt
                <?> "constant"

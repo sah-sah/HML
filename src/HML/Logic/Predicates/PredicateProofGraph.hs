@@ -21,76 +21,47 @@ import HML.Logic.Predicates.Predicates
 import HML.Logic.Predicates.PredicateCursors
 import HML.Utils.Utils
 
-import Data.Graph.Inductive.Graph(mkGraph, insNode, insEdges, ufold, match, (&), lab)
+import Data.Graph.Inductive.Graph(mkGraph, insNode, insNodes, insEdges, ufold, match, (&), lab, newNodes, labNodes)
 import Data.Graph.Inductive.PatriciaTree(Gr) -- the graph type, implemented as a patricia tree
 import Data.Graph.Inductive.Query.DFS(dfs)
 
 import Data.Function(on)
 import Data.List(sortBy, nub, null, (\\))
 import Data.Maybe(isJust, isNothing, fromJust, catMaybes)
-import Control.Monad(mplus)
-{-
+import Control.Monad(mplus, liftM)
 
-Proof type
+{- ----- Data Types ----- -}
 
-Each node needs an id
-
-Each node represents a result, with a special root node to represent axioms
-  -- needs a unique identifier that we use to refer to it
-  -- needs a unique int for the graph data type, maybe use this as the identifier
-  --   (wont work if we have special root type)
-  -- edges linking it to needed results, might be more than one way to derive it
-  -- so need a way to label edges
-  -- code for the deduction technique used
-  -- code if it is -> or <->
-
-Need a focus, separate from the graph
-
--- TODO: we need a way to check that predicates are well-defined, have the correct type
--- So we don't treat e.g. T & 2 as a meaningful result
--}
--- should this be in logic laws ?
 type NamedPredicate = (String, Predicate)
--- this is currently in PredicateProofs (but should be moved here)
---type NamedPredicate = (String, Predicate)
 
--- nodes are labelled with Result type, edges labelled with [Int]
--- graph
--- size, the number of nodes which start from 0
--- NOTE: we could replae nextNode with a function in the fgl library
--- that will give a valid new node id
--- TODO: keep a separate list of AxiomSchema, so they can't be used directly
--- but must be instantiated
-data ProofGraph = ProofGraph { proofGraph :: Gr ProofNode ()
-                             , nextNode :: Int }
+type ProofGraph = Gr ProofNode ()
+
+data ProofNode = ProofStep Result | Axiom AxiomSchema
     deriving (Show)
 
-{-
- - data ProofGraph = ProofGraph { graph :: Gr ProofNode ()
- -                              , schemaList :: [AxiomSchema]
- -
- - data AxiomSchema = AxiomSchema { schemaName :: String
- -                                , schemaGroup :: String -- for namespacing
- -                                , schemaDescription :: String -- how to use the schema
- -                                , axiomSchema :: PredicateSchema Predicate | FunctionSchema Function etc
- -
- -}
+data AxiomSchema = AxiomSchema { schemaName :: String
+                               , schemaGroup :: String -- for namespacing
+                               , schemaDescription :: String -- how to use the schema
+                               , schema :: Schema }
+     deriving (Show)
 
--- a node is either the root node with the axioms, or a result of a proof step
--- an assumption type, which has deductions = []
-data ProofNode = Axiom Result
-               | ProofStep Result
-    deriving (Show)
+-- this is to allow for other types of schema, e.g. ones based on functions
+-- a + b = c (where c is the evaluation of a + b)
+data Schema = PredicateSchema Predicate
+     deriving (Show)
 
--- a result is predicate with a name to identify it
--- and a mapping from Int to a Deduction type
--- the int identifies the edges pointing to the results needed for the deduction
--- NOTE: allow at most one deduction otherwise it creates problems searching through graphs
--- which path should we pick etc if there are multiple
 data Result = Result { resultName :: String
                      , resultPredicate :: Predicate
                      , deductions :: [Deduction]
                      , assumptions :: [Int] }
+    deriving (Show)
+
+-- a version of Result for sending as a JSON object
+data ResultStr = ResultStr { rsName :: String
+                           , rsPredicate :: Predicate
+                           , rsDeductions :: [([String],String)]
+                           , rsAssumptions :: [String]
+                           }
     deriving (Show)
 
 -- Deduction is list of nodes of source predicates and a deduction type
@@ -121,49 +92,84 @@ data FocusStep = Transform String
 data DeductionDirection = DDImp | DDIff
     deriving (Show, Eq)
 
+{- ----- Querying proof graphs ----- -}
 
+getProofNames :: ProofGraph -> [String]
+getProofNames = map (nameOfNode . snd) . filter (isProofStep . snd) . getProofNodes
 
-{- Contructing a proof graph -}
+getAxiomNames :: ProofGraph -> [String]
+getAxiomNames = map (nameOfNode . snd) . filter (not . isProofStep . snd) . getProofNodes
 
-{- ---------- Helper functions for NamedPredicates ---------- -}
+isProofStep :: ProofNode -> Bool
+isProofStep (ProofStep _) = True
+isProofStep (Axiom _)     = False
 
-namePredicate :: Predicate -> String -> NamedPredicate
-namePredicate p s = (s,p)
+getResultByName :: String -> ProofGraph -> Maybe Result
+getResultByName n pg = do pn <- getNodeByName n pg
+                          case pn of
+                            (_,ProofStep r) -> Just r
+                            (_,Axiom _)     -> Nothing
 
-nameOfPredicate :: NamedPredicate -> String
-nameOfPredicate = fst
+getSchemaByName :: String -> ProofGraph -> Maybe AxiomSchema
+getSchemaByName n pg = do pn <- getNodeByName n pg
+                          case pn of
+                            (_,ProofStep _) -> Nothing
+                            (_,Axiom as)    -> Just as
 
-justPredicate :: NamedPredicate -> Predicate
-justPredicate = snd
+isPredicateSchema :: AxiomSchema -> Bool
+isPredicateSchema as = case schema as of
+                         PredicateSchema _ -> True
+--                         _                 -> False
 
--- TODO: make a node for each axiom
-startProofGraph :: [NamedPredicate] -> ProofGraph
-startProofGraph as = ProofGraph { proofGraph = mkGraph aNodes []
-                                , nextNode = 1 }
-    where aNodes = zip [0,-1..] (map mkAxiom' as)
-          mkAxiom' (n,p) = Axiom (Result { resultName = n
-                                         , resultPredicate = p
-                                         , deductions = []
-                                         , assumptions = [] })
+predicateOfSchema :: AxiomSchema -> Maybe Predicate
+predicateOfSchema as = case schema as of
+                         PredicateSchema p -> Just p
 
+hasAssumptions :: Result -> Bool
+hasAssumptions = not . null . assumptions
+
+{--
 getPredicateM :: String -> ProofGraph -> Maybe Predicate
 -- getPredicateM n pg returns the predicate named n in pg, if it exists
 -- assumes names are unique in graph (enforced by the construction functions)
-getPredicateM n pg = ufold getP' Nothing (proofGraph pg)
-    where getP' (_,_,pn,_) mp = mp `mplus` lookup n [(nodeName pn, nodePredicate pn)]
+getPredicateM n pg = getResultM n pg >>= \r -> return $ resultPredicate r
+-}
+
+isAssumption :: Result -> Bool
+isAssumption = null . deductions
+
+mkResultStr :: ProofGraph -> Result -> ResultStr
+mkResultStr pg r = ResultStr { rsName = resultName r
+                             , rsPredicate = resultPredicate r
+                             , rsDeductions = maybe [(["error"],"error")] id (sequence $ map mkDStr (deductions r))
+                             , rsAssumptions = maybe ["error"] id asM }
+    where pns = getProofNodes pg
+
+          asM = do asPN <- sequence $ map (flip lookup pns) (assumptions r)
+                   return $ map nameOfNode asPN
+
+          mkDStr (rs,dt) = do nsPN <- sequence $ map (flip lookup pns) rs
+                              let ns = map nameOfNode nsPN
+                              return (ns, show dt)
+
+{- ----- Contructing proof graphs ----- -}
+
+-- TODO: make a node for each axiom
+startProofGraph :: [AxiomSchema] -> ProofGraph
+startProofGraph as = insNodes (zip [0..] $ map Axiom as) (mkGraph [] [])
 
 addResult :: NamedPredicate -> [String] -> DeductionType -> ProofGraph -> Either String ProofGraph
 -- addResult np sns dt pg adds a result to the proof graph
 -- assumes: the result is not already in the graph
 addResult (n,p) sns dt pg = do -- check name is not in use
-                               failOn (isJust $ getNodeN n pg) "Error(addResult): name already in use"
+                               failOn (isJust $ getNodeByName n pg) "Error(addResult): name already in use"
                                -- get source nodes
-                               sNodes  <- fromMaybe (sequence $ map (flip getNodeN pg) sns)
+                               sNodes  <- fromMaybe (sequence $ map (flip getNodeByName pg) sns)
                                                     "Error(addResult): unable to find source names"
                                -- get ids of source nodes
                                let sNids = map fst sNodes
                                -- get id for new node
-                               let nNode = nextNode pg
+                               let nNode = head $ newNodes 1 pg
                                -- inherit assumptions from source nodes
                                let nAssumptions = inheritAssumptions sNodes
                                -- get new node label
@@ -173,28 +179,29 @@ addResult (n,p) sns dt pg = do -- check name is not in use
                                                              , deductions = [(sNids,dt)]})
                                -- get the new proof graph
                                let nPG = insEdges (map (\sn -> (nNode, sn, ())) sNids) $
-                                            insNode (nNode,label) $ proofGraph pg
+                                            insNode (nNode,label) pg
                                -- return the new proof graph
-                               return (pg { proofGraph = nPG, nextNode = nNode + 1 })
+                               return nPG
 
 addLiftedResult :: NamedPredicate -> String -> String -> ProofGraph -> Either String ProofGraph
+-- addLiftedResult np resN assN pg adds the result np which the obtained by lifting resN by assN
 addLiftedResult (n,p) resN assN pg = do -- check name is not in use
-                                        failOn (isJust $ getNodeN n pg) "Error(addLiftedResult): name already in use"
+                                        failOn (isJust $ getNodeByName n pg) "Error(addLiftedResult): name already in use"
                                         -- get node of result to be lifted
-                                        resNode <- fromMaybe (getNodeN resN pg)
+                                        resNode <- fromMaybe (getNodeByName resN pg)
                                                              "Error(addLiftedResult): unable to find result name"
                                         -- get assumption node
-                                        assNode <- fromMaybe (getNodeN assN pg)
+                                        assNode <- fromMaybe (getNodeByName assN pg)
                                                              "Error(addLiftedResult): unable to find assumption name"
                                         -- check assNode is an assumption
-                                        failOn (not $ isAssumption $ snd assNode)
+                                        failOn (case snd assNode of { ProofStep r -> not $ isAssumption r; Axiom _ -> True })
                                                "Error(addLiftedResult): not lifted over an assumption"
                                         -- check resN depends on assN
                                         failOn (not $ (fst assNode) `elem` nodeAssumptions (snd resNode))
                                                "Error(addLiftedResult): result does not depend on assumption"
                                         -- construct result
                                         -- get id for next node
-                                        let nNode = nextNode pg
+                                        let nNode = head $ newNodes 1 pg
                                         -- inherit assumptions
                                         let nAssumptions = inheritAssumptions [resNode] \\ [fst assNode]
                                         -- get the source node ids
@@ -206,37 +213,36 @@ addLiftedResult (n,p) resN assN pg = do -- check name is not in use
                                                                       , deductions = [(sNids,LiftResult)]})
                                         -- get the new proof graph
                                         let nPG = insEdges (map (\sn -> (nNode, sn, ())) sNids) $
-                                                     insNode (nNode,label) $ proofGraph pg
+                                                     insNode (nNode,label) pg
                                         -- return the new proof graph
-                                        return (pg { proofGraph = nPG, nextNode = nNode + 1 })
+                                        return nPG
 
 addAssumption :: NamedPredicate -> ProofGraph -> Either String ProofGraph
 --addAssumption np pg adds the assumption np to the proof graph
 addAssumption (n,p) pg = do -- check name is not in use
-                            failOn (isJust $ getNodeN n pg) "Error(addAssumption): name already in use"
-                            -- check p is not already in graph
-                            failOn (isJust $ getNodeP p pg) "Error(addAssumption): predicate already in proof graph"
+                            failOn (isJust $ getNodeByName n pg) "Error(addAssumption): name already in use"
+                            -- check p is not already in graph?
+                            --failOn (isJust $ getResultByPredicate p pg) "Error(addAssumption): predicate already in proof graph"
                             -- get new node id
-                            let nNode = nextNode pg
+                            let nNode = head $ newNodes 1 pg
                             -- the label for the new node
                             let label = ProofStep (Result { resultName = n
                                                           , resultPredicate = p
                                                           , assumptions = []
                                                           , deductions = [] })
                             -- return the new proof graph
-                            return (pg { proofGraph = insNode (nNode,label) $ proofGraph pg
-                                       , nextNode = nNode + 1 })
+                            return (insNode (nNode,label) pg)
 
 mergeAssumption :: String -> String -> ProofGraph -> Either String ProofGraph
 -- assumes the merge is valid
 mergeAssumption an rn pg = do -- get assumption node
-                              assNode <- fromMaybe (getNodeN an pg)
+                              assNode <- fromMaybe (getNodeByName an pg)
                                                    "Error(mergeAssumption): unable to find assumption name"
                               -- check it is an assumption node
-                              failOn (not $ isAssumption $ snd assNode)
+                              failOn (case snd assNode of { ProofStep r -> not $ isAssumption r; Axiom _ -> True })
                                      "Error(mergeAssumption): can only merge assumptions"
                               -- get merging node
-                              resNode <- fromMaybe (getNodeN rn pg)
+                              resNode <- fromMaybe (getNodeByName rn pg)
                                                    "Error(mergeAssumption): unable to find result name"
                               -- get context for assumption node
                               (aCon,rest) <- fromMaybe (match' (fst assNode) pg)
@@ -245,41 +251,44 @@ mergeAssumption an rn pg = do -- get assumption node
                               let (inNs,_,_,_) = aCon
                               -- redirect edges
                               let nEs = map (\nid -> (nid, fst resNode, ())) (map snd inNs)
-                              -- move those edges to point to result
-                              let pg' = insEdges nEs rest
                               -- return new proof graph
-                              return $ pg { proofGraph = pg' }
-    where match' n pg = case (match n (proofGraph pg)) of
+                              return (insEdges nEs rest)
+    where match' n pg = case match n pg of
                           (Just c,r)  -> Just (c,r)
                           (Nothing,r) -> Nothing
--- Allow merging of an assumption with a result (if they are the same predicate)
--- But do not allow merging in other circumstances
--- We would have to write new deduction functions that use this otherwise
-{-
-updateResult :: NamedPredicate -> [String] -> DeductionType -> ProofGraph -> Either String ProofGraph
-updateResult (n,p) sns dt pg = do -- get node with name n
-                                  nNode <- fromMaybe (getNodeN n pg) "Error(updateResult): name is not in proof"
-                                  -- get context for the node
-                                  (nCon,rest) <- fromMaybe (match' nNode pg) "Error(updateResult):unable to find node"
-                                  -- get data from context
-                                  let (inE,_,pn,outE) = nCon
-                                  -- check predicates match
-                                  failOn (p /= nodePredicate pn) "Error(updateResult):predicates do not match"
-                                  -- get source nodes
-                                  sNodes  <- fromMaybe (sequence $ map (flip getNodeN pg) sns)
-                                                       "Error(updateResult): unable to find source names"
-                                  -- get updated context
-                                  let uCon = (inE  -- the same in edges
-                                             ,nNode -- the same node id
-                                             ,addDeduction' (sNodes,dt) pn -- add the deduction
-                                             , nub $ outE ++ map ((,) ()) sNodes) -- add the new out edges
-                                  -- return the new proof graph
-                                  return $ pg { proofGraph = uCon & rest }
 
+{- ----- Helper functions ----- -}
 
-          addDeduction' d (ProofStep r) = ProofStep (r { deductions = d:(deductions r)})
-          addDeduction' d (Axiom r)     = Axiom (r { deductions = d:(deductions r)})
--}
+getProofNodes :: ProofGraph -> [(Int,ProofNode)]
+getProofNodes = labNodes
+
+getNodeByName :: String -> ProofGraph -> Maybe (Int,ProofNode)
+-- getNodeByName n pg returns the node with name n from pg
+-- returns Nothing if n cannot be found
+-- returns the first found occurrence (but there should only be one)
+getNodeByName n pg = ufold findN Nothing pg
+    where findN (_,nid,pn,_) res = res `mplus` ((nid,pn) `ifM` (nameOfNode pn == n))
+
+getResultByPredicate :: Predicate -> ProofGraph -> Maybe (Int,Result)
+getResultByPredicate p pg = ufold findP Nothing pg
+    where findP (_,nid,ProofStep r,_) res = res `mplus` ((nid,r) `ifM` (resultPredicate r == p))
+          findP (_,nid,Axiom _,_)     res = res
+
+nameOfNode :: ProofNode -> String
+nameOfNode (ProofStep r) = resultName r
+nameOfNode (Axiom as)    = schemaName as
+
+inheritAssumptions :: [(Int,ProofNode)] -> [Int]
+inheritAssumptions = nub . concatMap getAs
+    where getAs (nid,ProofStep r) = if isAssumption r then [nid] else assumptions r
+          getAs (nid,Axiom _)     = []
+
+nodeAssumptions :: ProofNode -> [Int]
+nodeAssumptions (ProofStep r) = assumptions r
+nodeAssumptions (Axiom _)     = []
+
+{--
+
 
 getProofNames :: ProofGraph -> [String]
 getProofNames = map (nodeName . snd) . filter (isProofStep . snd) . getProofNodes
@@ -300,18 +309,20 @@ isProofStep _             = False
 isAssumption (ProofStep r) = null $ deductions r
 isAssumption _             = False
 
-getNodeN :: String -> ProofGraph -> Maybe (Int,ProofNode)
--- getNodeN n pg returns the int id of the n
--- returns Nothing if n cannot be found
--- returns the first found occurrence (but there should only be one)
-getNodeN n pg = ufold findN' Nothing (proofGraph pg)
-    where findN' (_,nid,pn,_) res = res `mplus` ((nid,pn) `ifM` (n == nodeName pn))
 
-getNodeP :: Predicate -> ProofGraph -> Maybe (Int,ProofNode)
-getNodeP p pg = ufold findP' Nothing (proofGraph pg)
-    where findP' (_,nid,pn,_) res = res `mplus` ((nid,pn) `ifM` (p == nodePredicate pn))
 
 {- Utility functions -}
+
+{- ---------- Helper functions for NamedPredicates ---------- -}
+
+namePredicate :: Predicate -> String -> NamedPredicate
+namePredicate p s = (s,p)
+
+nameOfPredicate :: NamedPredicate -> String
+nameOfPredicate = fst
+
+justPredicate :: NamedPredicate -> Predicate
+justPredicate = snd
 
 nodeName :: ProofNode -> String
 nodeName = resultName . getResult
@@ -395,5 +406,7 @@ data Proof = Proof { proofName :: String
                    , focus :: Maybe PredicateCursor
                    , focusName :: Maybe String -- should we record the focus moves, transformations etc
                    } deriving (Show)
+
+-}
 
 -}

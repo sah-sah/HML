@@ -114,6 +114,7 @@ bindToFormV _                  _                  = Nothing
 bindToFormS :: Special -> Special -> Maybe PredicateMatching
 bindToFormS (SInt n1)    (SInt n2)    = if n1==n2 then Just (PMatching [] [] []) else Nothing
 bindToFormS (SBool b1)   (SBool b2)   = if b1==b2 then Just (PMatching [] [] []) else Nothing
+bindToFormS (SEmptySet)  (SEmptySet)  = Just (PMatching [] [] [])
 bindToFormS (SZ)         (SZ)         = Just (PMatching [] [] [])
 bindToFormS (SZplus)     (SZplus)     = Just (PMatching [] [] [])
 bindToFormS (SZn e1)     (SZn e2)     = bindToFormExp e1 e2

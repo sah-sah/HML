@@ -33,7 +33,7 @@ import Data.Either(fromRight)
 => y \in A -> y \in A \union B & y \in B -> y \in A \union B
 => 
 -}
-
+{-
 test1 = startProof (standardAxioms)
 test2 = fromRight (error "Step failed") $ assume ("A1",p) test1
     where p = expP $ namedExp $ varN "P"
@@ -48,7 +48,7 @@ test6 = fromRight (error "Step failed") $ assume ("A3",(p `orP` q) `impP` r) tes
 test7 = fromRight (error "Step failed") $ modusPonensGen "R3" ["A1"] "A3" test6
 test8 = fromRight (error "Step failed") $ assume ("A4",p) test7
     where p = expP $ namedExp $ varN "x"
-
+-}
 -- TODO: need to test rename functions and modus ponens under FA
 
 -- start the proof
@@ -57,10 +57,10 @@ egProof = startProof (standardAxioms ++ setAxioms)
 -- first we need to start a new subproof for A \union B \subset B -> A \subset B
 -- we assume A \union B \subset B
 egProof2 = fromRight (error "Step failed") $ assume ("A1",asp) egProof
-    where setA = namedExp $ varN "A"
-          setB = namedExp $ varN "B"
+    where setA = ExpN $ Var $ SimpleVar "A"
+          setB = ExpN $ Var $ SimpleVar "B"
 
-          asp = expP $ ((setA `union` setB) `subset` setB)
+          asp = PExp $ ExpFn "setSubset" [ExpFn "setUnion" [setA,setB],setB]
 
 -- get axiom from schema
 --TODO: we need to check we are not capturing an names or variables when we 
@@ -69,38 +69,52 @@ egProof2 = fromRight (error "Step failed") $ assume ("A1",asp) egProof
 --Expression patterns are used where expressions go
 -- Need more checking when instantiating a schema
 egProof3 = fromRight (error "Step failed") $ instantiateSchema "R1" "subsetAxiom" pm egProof2
-    where pm = createMatching [] [("A",setAB),("B",setB)] [("x",varN "x")]
+    where pm = createMatching [] [("A",setAB),("B",setB)] [("x",SimpleVar "x")]
 
-          setA = namedExp $ varN "A"
-          setB = namedExp $ varN "B"
+          setA = ExpN $ Var $ SimpleVar "A"
+          setB = ExpN $ Var $ SimpleVar "B"
 
-          setAB = setA `union` setB
+          setAB = ExpFn "setUnion" [setA,setB]
 
+egProof4 = fromRight (error "Step failed") $ modusPonensGen "R2" ["A1"] "R1" egProof3
 
-egProof4 = fromRight (error "Step failed") $ modusPonens "R2" "A1" "R1" egProof3
-
+{-
 egProof5a = fromRight (error "Step failed") $ focusOn "R2" egProof4
-egProof6a = fromRight (error "Step failed") $ renameBoundVariableInFocus "x" "y" egProof5a
-egProof7a = fromRight (error "Step failed") $ assume ("A2",asp) egProof6a
-    where asp = expP $ inSet (namedExp $ varN "y") (setA `union` setB)
 
-          setA = namedExp $ varN "A"
-          setB = namedExp $ varN "B"
+egProof6a = fromRight (error "Step failed") $ renameBoundVariableInFocus "x" "y" egProof5a
+
+egProof7a = fromRight (error "Step failed") $ assume ("A2",asp) egProof6a
+    where asp = PExp $ ExpFn "setElem" [ExpN $ Var $ SimpleVar "y",ExpFn "setUnion" [setA,setB]]
+
+          setA = ExpN $ Var $ SimpleVar "A"
+          setB = ExpN $ Var $ SimpleVar "B"
+
 egProof8a = fromRight (error "Step failed") $ modusPonensUnderFA "R3" ["A2"] "R2" "y" egProof7a
+-}
 
 
 egProof5 = fromRight (error "Step failed") $ instantiateSchema "R3" "unionAxiom" pm egProof4
-    where pm = createMatching [] [("A",setA),("B",setB)] [("x",varN "x")]
-          setA = namedExp $ varN "A"
-          setB = namedExp $ varN "B"
+    where pm = createMatching [] [("A",setA),("B",setB)] [("x",SimpleVar "x")]
+          setA = ExpN $ Var $ SimpleVar "A"
+          setB = ExpN $ Var $ SimpleVar "B"
 
 
 egProof6 = fromRight (error "Step failed") $ instantiateAt "R4" "R2" "y" egProof5
 
 egProof7 = fromRight (error "Step failed") $ instantiateAt "R5" "R3" "y" egProof6
+-- alternatively we could use the focus
+egProof7a = fromRight (error "Step failed") $ instantiateSchema "R5a" "equivalence" pm egProof7
+    where pm = createMatching [("P",p),("Q",q)] [] []
 
-egProof8 = fromRight (error "Step failed") $ modusPonens "R6" "R5" "equivalence" egProof7
+          p = PExp $ ExpFn "setElem" [ExpN $ Var $ SimpleVar "y",ExpFn "setUnion" [setA,setB]]
+          q = POr (PExp $ ExpFn "setElem" [ExpN $ Var $ SimpleVar "y",setA])
+                  (PExp $ ExpFn "setElem" [ExpN $ Var $ SimpleVar "y",setB])
 
+          setA = ExpN $ Var $ SimpleVar "A"
+          setB = ExpN $ Var $ SimpleVar "B"
+
+egProof8 = fromRight (error "Step failed") $ modusPonensGen "R6" ["R5"] "R5a" egProof7a
+{--
 egProof9 = fromRight (error "Step failed") $ splitAnd ("R7","R8") "R6" egProof8
 
 egProof10 = fromRight (error "Step failed") $ modusPonens "R9" "R8" "implication" egProof9
@@ -168,3 +182,4 @@ egProof35 = fromRight (error "Step failed") $ modusPonens "R21" "R20" "R19" egPr
 egProof36 = fromRight (error "Step failed") $ liftResult "R22" "R21" "A1" egProof35
 
 egProof37 = fromRight (error "Step failed") $ createSchema "S1" "R22" egProof36
+-}

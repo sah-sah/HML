@@ -9,6 +9,7 @@ module HML.Logic.Predicates.PredicateLogicLaws where
 import HML.Logic.Predicates.Predicates
 import HML.Logic.Predicates.PredicateCursors
 import HML.Logic.Predicates.PredicateMatching
+import HML.Logic.Predicates.PredicatesPrettyPrint(prettyPrint)
 
 --import Data.List(sortBy)
 import Control.Monad(mplus)
@@ -24,13 +25,13 @@ matchLogicLaw ll pc = matchF ll pc || matchB ll pc
 
 --matchF ll pc returns True if p matches cp at the cursor point
 matchF ll (PC mp ds sp) = case ll of
-                            PBinary PIff pForm qForm -> maybe False consistent (bindToForm pForm sp)
-                            _                        -> False
+                            PIff pForm qForm -> maybe False consistent (bindToForm pForm sp)
+                            _                -> False
 
 --matchB ll pc returns True if q matches cp at the cursor point
 matchB ll (PC mp ds sp) = case ll of
-                            PBinary PIff pForm qForm -> maybe False consistent (bindToForm qForm sp)
-                            _                        -> False
+                            PIff pForm qForm -> maybe False consistent (bindToForm qForm sp)
+                            _                -> False
 
 apF_M, apB_M, apLogicLawM :: Predicate -> PredicateCursor -> Maybe PredicateCursor
 --apF_M ll pc returns proposition obtained by replacing p with q at the cursor point
@@ -39,16 +40,16 @@ apF_M ll (PC mp ds sp) = do (p,q) <- getForms'
                             sp' <- apMatchingM pm q
                             return (PC mp ds sp')
     where getForms' = case ll of
-                        PBinary PIff pForm qForm -> Just (pForm, qForm)
-                        _                        -> Nothing
+                        PIff pForm qForm -> Just (pForm, qForm)
+                        _                -> Nothing
 --apB_M (p,q) cp returns proposition obtained by replacing q with p at the cursor point
 apB_M ll (PC mp ds sp) = do (p,q) <- getForms'
                             pm <- bindToForm q sp
                             sp' <- apMatchingM pm p
                             return (PC mp ds sp')
     where getForms' = case ll of
-                        PBinary PIff pForm qForm -> Just (pForm, qForm)
-                        _                        -> Nothing
+                        PIff pForm qForm -> Just (pForm, qForm)
+                        _                -> Nothing
 --apLogicLawM (p,q) cp applies the logic law at the cursor point
 --it will preferentially perform p->q over q->p (if both are possible)
 -- mplus takes the first result not equal to Nothing
@@ -62,6 +63,7 @@ apB ll cp = maybe (error "apB: cannot apply logic law") id (apB_M ll cp)
 --apF is an unsafe version of apF_M
 apLogicLaw ll cp = maybe (error "apLogicLaw: cannot apply logic law") id (apLogicLawM ll cp)
 
+{- UPDATE THIS WHEN NEEDED
 renameBoundVariableAtCut :: String -> String -> PredicateCursor -> Maybe PredicateCursor
 renameBoundVariableAtCut xn yn (PC mp ds sp) = if yn `elem` (getVariableNames mp ++ getVariableNames sp)
                                                then Nothing
@@ -76,111 +78,105 @@ renameBoundVariableAtCut xn yn (PC mp ds sp) = if yn `elem` (getVariableNames mp
                                                          if bv == xn then Just (PBinding (Exists (PVar yn) bp') p')
                                                                      else Nothing
                   _                                -> Nothing
-
+-}
 {- ---------- Logic Laws ---------- -}
 -- the standard logic laws for predicate logic
 
-equivalenceLaw = (p `iffP` q) `iffP` ((p `impP` q) `andP` (q `impP` p))
-    where p = patternP "P"
-          q = patternP "Q"
+equivalenceLaw = PIff (PIff p q) (PAnd (PImp p q) (PImp q p))
+    where p = PPatVar "P"
+          q = PPatVar "Q"
 
-implicationLaw = (p `impP` q) `iffP` ((notP p) `orP` q)
-    where p = patternP "P"
-          q = patternP "Q"
+implicationLaw = PIff (PImp p q) (POr (PNot p) q)
+    where p = PPatVar "P"
+          q = PPatVar "Q"
 
-doubleNegationLaw = (notP (notP p)) `iffP` p
-    where p = patternP "P"
+doubleNegationLaw = PIff (PNot (PNot p)) p
+    where p = PPatVar "P"
 
-idempotentAndLaw = (p `andP` p) `iffP` p
-    where p = patternP "P"
+idempotentAndLaw = PIff (PAnd p p) p
+    where p = PPatVar "P"
 
-idempotentOrLaw = (p `orP` p) `iffP` p
-    where p = patternP "P"
+idempotentOrLaw = PIff (POr p p) p
+    where p = PPatVar "P"
 
-commutativeAndLaw = (p `andP` q) `iffP` (q `andP` p)
-    where p = patternP "P"
-          q = patternP "Q"
+commutativeAndLaw = PIff (PAnd p q) (PAnd q p)
+    where p = PPatVar "P"
+          q = PPatVar "Q"
 
-commutativeOrLaw = (p `orP` q) `iffP` (q `orP` p)
-    where p = patternP "P"
-          q = patternP "Q"
+commutativeOrLaw = PIff (POr p q) (POr q p)
+    where p = PPatVar "P"
+          q = PPatVar "Q"
 
-associativeAndLaw = (p `andP` (q `andP` r)) `iffP` ((p `andP` q) `andP` r)
-    where p = patternP "P"
-          q = patternP "Q"
-          r = patternP "R"
+associativeAndLaw = PIff (PAnd p (PAnd q r))  (PAnd (PAnd p q) r)
+    where p = PPatVar "P"
+          q = PPatVar "Q"
+          r = PPatVar "R"
 
-associativeOrLaw = (p `orP` (q `orP` r)) `iffP` ((p `orP` q) `orP` r)
-    where p = patternP "P"
-          q = patternP "Q"
-          r = patternP "R"
+associativeOrLaw = PIff (POr p (POr q r))  (POr (POr p q) r)
+    where p = PPatVar "P"
+          q = PPatVar "Q"
+          r = PPatVar "R"
 
-distributiveAndLaw = (p `andP` (q `orP` r)) `iffP` ((p `andP` q) `orP` (p `andP` r))
-    where p = patternP "P"
-          q = patternP "Q"
-          r = patternP "R"
+distributiveAndLaw = PIff (PAnd p (POr q r))  (POr (PAnd p q) (PAnd p r))
+    where p = PPatVar "P"
+          q = PPatVar "Q"
+          r = PPatVar "R"
 
-distributiveOrLaw =  (p `orP` (q `andP` r)) `iffP` ((p `orP` q) `andP` (p `orP` r))
-    where p = patternP "P"
-          q = patternP "Q"
-          r = patternP "R"
+distributiveOrLaw = PIff (POr p (PAnd q r))  (PAnd (POr p q) (POr p r))
+    where p = PPatVar "P"
+          q = PPatVar "Q"
+          r = PPatVar "R"
 
-deMorgansAndLaw = (notP (p `andP` q)) `iffP` ((notP p) `orP` (notP q))
-    where p = patternP "P"
-          q = patternP "Q"
+deMorgansAndLaw = PIff (PNot (PAnd p q)) (POr (PNot p) (PNot  q))
+    where p = PPatVar "P"
+          q = PPatVar "Q"
 
-deMorgansOrLaw = (notP (p `orP` q)) `iffP` ((notP p) `andP` (notP q))
-    where p = patternP "P"
-          q = patternP "Q"
+deMorgansOrLaw = PIff (PNot (POr p q)) (PAnd (PNot p) (PNot q))
+    where p = PPatVar "P"
+          q = PPatVar "Q"
 
-identityAndLaw = (p `andP` trueP) `iffP` p
-    where p = patternP "P"
+identityAndLaw = PIff (PAnd p (PExp $ ExpN $ Constant $ SBool True)) p
+    where p = PPatVar "P"
 
-identityOrLaw = (p `orP` falseP) `iffP` p
-    where p = patternP "P"
+identityOrLaw = PIff (POr p (PExp $ ExpN $ Constant $ SBool False)) p
+    where p = PPatVar "P"
 
-annihilationAndLaw = (p `andP` falseP) `iffP` falseP
-    where p = patternP "P"
+annihilationAndLaw = PIff (PAnd p (PExp $ ExpN $ Constant $ SBool False)) (PExp $ ExpN $ Constant $ SBool False)
+    where p = PPatVar "P"
 
-annihilationOrLaw = (p `orP` trueP) `iffP` trueP
-    where p = patternP "P"
+annihilationOrLaw = PIff (POr p (PExp $ ExpN $ Constant $ SBool True)) (PExp $ ExpN $ Constant $ SBool True)
+    where p = PPatVar "P"
 
-inverseAndLaw = (p `andP` (notP p)) `iffP` falseP
-    where p = patternP "P"
+inverseAndLaw = PIff (PAnd p (PNot  p)) (PExp $ ExpN $ Constant $ SBool False)
+    where p = PPatVar "P"
 
-inverseOrLaw = (p `orP` (notP p)) `iffP` trueP
-    where p = patternP "P"
+inverseOrLaw = PIff (POr p (PNot  p)) (PExp $ ExpN $ Constant $ SBool True)
+    where p = PPatVar "P"
 
-absorptionAndLaw = (p `andP` (p `orP` q)) `iffP` p
-    where p = patternP "P"
-          q = patternP "Q"
+absorptionAndLaw = PIff (PAnd p (POr p q))  p
+    where p = PPatVar "P"
+          q = PPatVar "Q"
 
-absorptionOrLaw = (p `orP` (p `andP` q)) `iffP` p
-    where p = patternP "P"
-          q = patternP "Q"
+absorptionOrLaw = PIff (POr p (PAnd p q))  p
+    where p = PPatVar "P"
+          q = PPatVar "Q"
 
 -- deMorgans laws for predicates (not forall etc)
 -- forall x. forall y. = forall y. forall x.
-deMorgansForallLaw = (notP (forall x t p)) `iffP` (exists x t (notP p))
-    where p = patternP "P"
-          t = patternP "T"
-          x = patternN "x"
+deMorgansForallLaw = PIff (PNot (PBinding Forall x p))  (PBinding Exists x (PNot p))
+    where p = PPatVar "P"
+          x = VPatVar "x"
 
-deMorgansExistsLaw = (notP (exists x t p)) `iffP` (forall x t (notP p))
-    where p = patternP "P"
-          t = patternP "T"
-          x = patternN "x"
+deMorgansExistsLaw = PIff (PNot (PBinding Exists x p)) (PBinding Forall x (PNot p))
+    where p = PPatVar "P"
+          x = VPatVar "x"
 
-swapForallLaw = (forall x t (forall y s p)) `iffP` (forall y s (forall x t p))
-    where p = patternP "P"
-          t = patternP "T"
-          s = patternP "S"
-          x = patternN "x"
-          y = patternN "y"
+swapForallLaw = PIff (PBinding Forall x (PBinding Forall y p)) (PBinding Forall y (PBinding Forall x p))
+    where p = PPatVar "P"
+          x = VPatVar "x"
+          y = VPatVar "y"
          
-swapExistsLaw = (exists x t (exists y s p)) `iffP` (exists y s (exists x t p))
-    where p = patternP "P"
-          t = patternP "T"
-          s = patternP "S"
-          x = patternN "x"
-          y = patternN "y"
+swapExistsLaw = PIff (PBinding Exists x (PBinding Exists y p)) (PBinding Exists y (PBinding Exists x p))
+    where p = PPatVar "P"
+          x = VPatVar "x"
+          y = VPatVar "y"
