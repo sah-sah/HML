@@ -106,7 +106,7 @@ data Command = CQuit -- quit
     deriving (Show, Eq)
 
 -- | starts a Haskell Proof Assistant server
-startHPAServer :: [NamedPredicate] -> LaTeXContext -> IO ()
+startHPAServer :: [AxiomSchema] -> LaTeXContext -> IO ()
 startHPAServer axs lcon = evalStateT runHPAServer (prf,lcon)
     where prf = startProof axs
 
@@ -193,9 +193,9 @@ execGeneraliseWith cmap n rn vn = case vnM of
                   Left _  -> Nothing
                   Right p -> getN' p
 
-          getN' (PExp  (ExpN (PVar n))  ) = Just n
-          getN' (PExpT (ExpN (PVar n)) _) = Just n
-          getN' _                         = Nothing
+          -- getN' returns name of variable (simple name only), or nothing
+          getN' (PExp (ExpN (Var v))) = Just v
+          getN' _                     = Nothing
 
 execClearFocus :: HPARequest -> HPA ()
 execClearFocus cmap = do (prf,lcon) <- get
@@ -262,7 +262,7 @@ execSplitAnd cmap pn qn pandq = do (prf,lcon) <- get
 execModusPonens :: HPARequest -> String -> String -> String -> HPA ()
 execModusPonens cmap n pn pimpqn = do -- get proof
                                       (prf,lcon) <- get
-                                      case modusPonens n pn pimpqn prf of
+                                      case modusPonensGen n [pn] pimpqn prf of
                                         Left str   -> returnUpdatedRequest cmap [fail', error' str]
                                         Right prf' -> do put (prf',lcon)
                                                          returnUpdatedRequest cmap [ok']
@@ -279,9 +279,9 @@ execInstantiateAt cmap n fan xvarp = case xnM of
                   Left _  -> Nothing
                   Right p -> getN' p
 
-          getN' (PExp  (ExpN (PVar n))  ) = Just n
-          getN' (PExpT (ExpN (PVar n)) _) = Just n
-          getN' _                         = Nothing
+          -- getN' returns name of variable (simple name only), or nothing
+          getN' (PExp  (ExpN (Var (SimpleVar n)))) = Just n
+          getN' _                                  = Nothing
 
 
 
@@ -295,13 +295,14 @@ instSchema cmap n sn = do -- get proof
                                          Left str -> returnUpdatedRequest cmap [fail', error' str]
                                          Right prf' -> do put (prf',lcon)
                                                           returnUpdatedRequest cmap [ok']
-    where pmM prf = do p <- getPredicateByNameM sn prf
+    where pmM prf = do sc <- getSchemaByName sn (proofGraph prf)
+                       p <- predicateOfSchema sc
                        -- get patvars
                        let (ps,es,ns) = getPatterns p
                        -- try to read each patvar from the JSON object
                        psPR <- sequence $ map (\(PPatVar n) -> Map.lookup ("P{"++n++"}") cmap) ps
                        esPR <- sequence $ map (\(ExpPatVar n) -> Map.lookup ("E{"++n++"}") cmap) es
-                       nsPR <- sequence $ map (\(NPatVar n) -> Map.lookup ("N{"++n++"}") cmap) ns
+                       nsPR <- sequence $ map (\(VPatVar n) -> Map.lookup ("V{"++n++"}") cmap) ns
                        -- try to parse the raw predicates
                        psP <- sequence $ map parse' psPR
                        esP <- sequence $ map parse' esPR
@@ -312,7 +313,7 @@ instSchema cmap n sn = do -- get proof
                        -- construct a PredicateMatching
                        return $ PMatching { predicatePatterns = zip (map (\(PPatVar n) -> n) ps) psP
                                           , expressionPatterns = zip (map (\(ExpPatVar n) -> n) es) esE
-                                          , namePatterns = zip (map (\(NPatVar n) -> n) ns) nsN
+                                          , variablePatterns = zip (map (\(VPatVar n) -> n) ns) nsN
                                           }
 
           parse' s = case parse predicate "(unknown predicate)" s of
@@ -320,22 +321,20 @@ instSchema cmap n sn = do -- get proof
                        Right p -> Just p
 
           getE' (PExp e)    = Just e
-          getE' (PExpT e _) = Just e
           getE' _           = Nothing
 
           getN' p = (getE' p) >>= \e ->
                        case e of
-                         ExpN n -> Just n
-                         _      -> Nothing
+                         ExpN (Var v) -> Just v
+                         _            -> Nothing
 
 --RequestStr should be an instance of toJSON
 getDetails :: HPARequest -> String -> HPA ()
 getDetails cmap str = do (prf,lcon) <- get
-                         case getResultString str prf of
+                         case getResultStrByName str prf of
                            Nothing -> returnUpdatedRequest cmap [fail']
                            Just rs -> do -- update request with what we have
                                          let cmap' = updateRequest cmap [ok'
-                                                                        ,("type",rsType rs)
                                                                         ,(result' $ latexPPinContext lcon (rsPredicate rs))]
                                          -- unpack the updated cmap
                                          let currPairs = map (\(f,v) -> T.pack f .= v) (Map.toList cmap')
@@ -344,13 +343,15 @@ getDetails cmap str = do (prf,lcon) <- get
                                                          ,"assumptions" .= rsAssumptions rs]
                                          -- return the response
                                          liftIO $ C.putStrLn (encode $ object (currPairs++morePairs))
+    where getResultStrByName str prf = do res <- getResultByName str (proofGraph prf)
+                                          return $ mkResultStr (proofGraph prf) res
 
 -- TODO: we should update and return the original JSON object
 printName :: HPARequest -> String -> HPA ()
 printName cmap n = do (prf,lcon) <- get
-                      case getNamedPredicate n prf of
+                      case getResultByName n (proofGraph prf) of
                         Nothing -> returnUpdatedRequest cmap [fail']
-                        Just p  -> returnUpdatedRequest cmap [ok', result' $ latexPPinContext lcon p]
+                        Just r  -> returnUpdatedRequest cmap [ok', result' $ latexPPinContext lcon (resultPredicate r)]
 
 getNames :: HPARequest -> HPA ()
 getNames cmap = do (prf,lcon) <- get
